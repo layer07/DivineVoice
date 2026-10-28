@@ -32,9 +32,16 @@ one has the same name as a built-in clip, yours wins.
 
 ## Licensing
 
-Everything in this folder ships in a GPL-2.0-or-later repo. Only add audio whose
-license allows that: your own voice, Apache/MIT/CC-BY TTS output (Kokoro), or a
-paid service whose terms allow redistribution. **Never** commercial recordings.
+The code is GPL-2.0-or-later. **The audio in this folder is separate data under
+its own terms**, bundled alongside the code:
+
+| clips | voice | license |
+|---|---|---|
+| `01_altermann`, `02_leftmost_child` | generated with [OmniVoice](https://huggingface.co/k2-fsa/OmniVoice) (k2-fsa) via VoiceStudio | **CC-BY-NC-4.0**, inherited from OmniVoice's weights. Fine for this non-commercial project; a commercial fork should swap the clips |
+
+Scripts (`.txt`) © Magnus Leatti (layer07). New clips need audio whose license
+allows redistribution: your own voice, Apache/MIT/CC-BY TTS output (e.g. Kokoro),
+or a service whose terms allow it. **Never** commercial recordings.
 
 ## From the terminal
 
