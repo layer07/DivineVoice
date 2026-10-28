@@ -58,7 +58,9 @@ struct Opts {
     device:    Device,
     lang:      String,
     /// Only the first N seconds: a push-to-talk-sized sentence. Ungraded.
-    first:     Option<f64>,
+    /// Several ("2,3.5,5") = a different length every run, like real phrases.
+    /// That matters: a GPU builds kernels per input shape, a CPU doesn't care.
+    first:     Vec<f64>,
     /// Sit idle this long before every warm run, like real dictation does
     /// between sentences. This is what lets a GPU clock down.
     gap_ms:    u64,
@@ -71,7 +73,7 @@ const USAGE: &str = "usage: divinevoice bench <audio-file> [--reference script.t
                      \x20      divinevoice bench --clip <id>      (a benchmark clip; graded against its script)\n\
                      \x20  options: --model <dir|catalogue-id>  --iters N  --thread-scan 1,2,4,8  --text\n\
                      \x20           --device cpu|cuda|directml  --lang auto|en|pt|ja…\n\
-                     \x20           --first SECS (a sentence-sized slice)  --gap MS (idle before each run)  --json";
+                     \x20           --first SECS[,SECS…] (sentence-sized slices, cycled)  --gap MS (idle before each run)  --json";
 
 pub fn run(args: &[String], cfg: &Config) -> Result<()> {
     let o = parse(args, cfg)?;
@@ -90,11 +92,12 @@ pub fn run(args: &[String], cfg: &Config) -> Result<()> {
         }
     };
     // A slice is a different exam than the script: no grading.
-    let (pcm, script) = match o.first {
-        Some(f) => (pcm[..pcm.len().min((f * SR as f64) as usize)].to_vec(), None),
-        None => (pcm, script),
+    let (takes, script) = if o.first.is_empty() {
+        (vec![pcm], script)
+    } else {
+        (o.first.iter().map(|f| pcm[..pcm.len().min((f * SR as f64) as usize)].to_vec()).collect(), None)
     };
-    let secs = pcm.len() as f64 / SR as f64;
+    let secs = takes.iter().map(|t| t.len() as f64 / SR as f64).sum::<f64>() / takes.len() as f64;
 
     println!("\n{} bench ({})\n──────────────────────────", crate::config::APP, o.device.label());
     println!("audio  {label}\nmodel  {} ({:?})\niters  {} warm (+1 cold){}\n",
@@ -106,7 +109,7 @@ pub fn run(args: &[String], cfg: &Config) -> Result<()> {
     let runs: Vec<Run> = o.threads.iter()
         .filter_map(|&t| {
             println!("═══ {} ═══", fmt_threads(t));
-            bench_one(t, &o, &pcm, script.as_deref())
+            bench_one(t, &o, &takes, script.as_deref())
                 .inspect(|r| print_run(r, secs))
                 .inspect(|r| if o.json { print_json(r, &o, secs) })
                 .inspect_err(|e| println!("  ERROR: {}\n", asr::explain(o.device, &format!("{e:#}"))))
@@ -128,7 +131,7 @@ fn parse(args: &[String], cfg: &Config) -> Result<Opts> {
     let mut text = false;
     let mut device = cfg.device;
     let mut lang = cfg.language.clone();
-    let (mut first, mut gap_ms, mut json) = (None, 0, false);
+    let (mut first, mut gap_ms, mut json) = (Vec::new(), 0, false);
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut val = |flag: &str| it.next().ok_or_else(|| anyhow!("{flag} needs a value"));
@@ -146,7 +149,10 @@ fn parse(args: &[String], cfg: &Config) -> Result<Opts> {
             "--reference" | "-r" => reference = Some(PathBuf::from(val("--reference")?)),
             "--text" => text = true,
             "--lang" | "-l" => lang = val("--lang")?.to_lowercase(),
-            "--first"  => first = Some(val("--first")?.parse::<f64>().context("--first wants seconds")?.max(0.5)),
+            "--first"  => first = val("--first")?.split(',')
+                .map(|x| x.trim().parse::<f64>().map(|f| f.max(0.5)))
+                .collect::<Result<_, _>>()
+                .context("--first wants seconds, e.g. 5 or 1.8,3.1,4.6")?,
             "--gap"    => gap_ms = val("--gap")?.parse().context("--gap wants milliseconds")?,
             "--json"   => json = true,
             "--device" | "-d" => device = val("--device").and_then(|v| Device::ALL.into_iter()
@@ -194,12 +200,13 @@ fn ms_of<T>(f: impl FnOnce() -> T) -> (T, u128) {
     (r, t.elapsed().as_millis())
 }
 
-fn bench_one(threads: Option<usize>, o: &Opts, pcm: &[f32], script: Option<&str>) -> Result<Run> {
+/// `takes` cycle through the warm runs (one take = the classic fixed clip).
+fn bench_one(threads: Option<usize>, o: &Opts, takes: &[Vec<f32>], script: Option<&str>) -> Result<Run> {
     let (model, load_ms) = ms_of(|| asr::load_on(&o.model, threads, o.device, true, &o.lang));
     let mut model = model?.model;
     println!("  load  {load_ms} ms");
 
-    let (text, cold_ms) = ms_of(|| asr::transcribe(&mut model, pcm.to_vec()));
+    let (text, cold_ms) = ms_of(|| asr::transcribe(&mut model, takes[0].clone()));
     let text = text?;
     println!("  cold  {cold_ms} ms → {:?}", clip(&text, 60));
     if let Some(s) = script { print_grade(s, &text); }
@@ -209,7 +216,7 @@ fn bench_one(threads: Option<usize>, o: &Opts, pcm: &[f32], script: Option<&str>
     let warm_ms = (1..=iters)
         .map(|n| {
             if o.gap_ms > 0 { std::thread::sleep(std::time::Duration::from_millis(o.gap_ms)); }
-            let (r, ms) = ms_of(|| asr::transcribe(&mut model, pcm.to_vec()));
+            let (r, ms) = ms_of(|| asr::transcribe(&mut model, takes[n % takes.len()].clone()));
             print!("\r  warm  {n}/{iters}  {ms} ms   ");
             let _ = std::io::stdout().flush();
             r.map(|_| ms)
