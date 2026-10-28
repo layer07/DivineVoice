@@ -281,6 +281,7 @@ const ASSETS: &[(&str, &str, &[u8])] = &[
     ("/app.css",     "text/css; charset=utf-8",        include_bytes!("../ui/app.css")),
     ("/app.js",      "text/javascript; charset=utf-8", include_bytes!("../ui/app.js")),
     ("/themes.js",   "text/javascript; charset=utf-8", include_bytes!("../ui/themes.js")),
+    ("/speed.js",    "text/javascript; charset=utf-8", include_bytes!("../ui/speed.js")),
     // 634 KB, 121 frames of a pink pixel devil-cat jumping. Worth every byte.
     ("/mascot.webp", "image/webp",                     include_bytes!("../ui/mascot.webp")),
 ];

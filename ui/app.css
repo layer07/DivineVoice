@@ -732,6 +732,32 @@ table.runs { width: 100%; border-collapse: collapse; font: 12px var(--mono); }
 .dev-note b { color: var(--io-text-secondary); margin-right: 4px; }
 .dev-note.warn { color: var(--io-warning); }
 
+/* ── speed ──────────────────────────────────────────────────────────── */
+
+.sp-rig { margin-bottom: 10px; gap: 6px; }
+.sp-rig .chip svg { color: var(--io-accent); }
+.sp-stats { grid-template-columns: repeat(4, 1fr); }
+.sp-card { position: relative; padding-bottom: 10px; }
+.sp-key { display: inline-flex; align-items: center; gap: 6px; font: 11px var(--mono); color: var(--io-text-secondary); margin-left: 12px; }
+.sp-key i { width: 12px; height: 8px; }
+.sp-key i.cpu, .sp-bar.cpu i { background: var(--io-text-secondary); }
+.sp-key i.directml, .sp-bar.directml i { background: var(--io-accent); box-shadow: 0 0 8px var(--io-accent-glow); }
+.sp-rows { display: flex; flex-direction: column; }
+.sp-row { display: grid; grid-template-columns: 230px 1fr 78px 46px; gap: 12px; align-items: center; padding: 5px 0; border-top: 1px solid var(--io-border-subtle); }
+.sp-name { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13px; }
+.sp-name b { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sp-bars { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sp-bar { position: relative; height: 11px; display: flex; align-items: center; gap: 6px; cursor: default; }
+.sp-bar i { display: block; height: 100%; min-width: 2px; flex: none; }
+.sp-bar.over i { -webkit-mask: linear-gradient(-75deg, transparent 6px, #000 6px, #000 9px, transparent 9px, transparent 12px, #000 12px); }
+.sp-v { font: 10.5px var(--mono); color: var(--io-text-secondary); white-space: nowrap; }
+.sp-bar.na .sp-v { color: var(--io-text-tertiary); font-style: italic; }
+.sp-bar.na { cursor: help; }
+.sp-win { font: 700 10.5px var(--mono); letter-spacing: .08em; text-align: center; padding: 2px 0; border: 1px solid var(--io-border); color: var(--io-text-tertiary); }
+.sp-win.gpu { color: var(--io-accent); border-color: var(--io-accent-dim); }
+.sp-win.cpu { color: var(--io-text-primary); }
+.sp-wer { font: 11px var(--mono); color: var(--io-text-tertiary); text-align: right; }
+
 /* ── about ──────────────────────────────────────────────────────────── */
 
 .about-hero { text-align: left; padding: 30px 26px; }

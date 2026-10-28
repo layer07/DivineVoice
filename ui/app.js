@@ -74,6 +74,7 @@ const I = {
   history:  svg('<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 3"/>'),
   perf:     svg('<path d="M3 20h18"/><path d="M6 16v-3M10 16V8M14 16v-6M18 16V4"/>'),
   bench:    svg('<rect x="3" y="4" width="18" height="16"/><path d="M7 9l3 3-3 3M12 15h5"/>'),
+  speed:    svg('<path d="M3 17a9 9 0 0 1 18 0"/><path d="M12 17l5-6M6.5 12.5l-1-1M12 8V6.5M17.5 12.5l1-1"/>'),
   sound:    svg('<path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11"/>'),
   mute:     svg('<path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M17 9l5 6M22 9l-5 6"/>'),
   advanced: svg('<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><rect x="14" y="4" width="4" height="4"/><rect x="8" y="10" width="4" height="4"/><rect x="16" y="16" width="4" height="4"/>'),
@@ -107,6 +108,7 @@ const PAGES = {
   audio:    { name: 'Audio',    icon: I.audio,    view: () => viewAudio() },
   perf:     { name: 'Perf',     icon: I.perf,     view: () => viewPerf() },
   bench:    { name: 'Benchmark', icon: I.bench,   view: () => viewBench() },
+  speed:    { name: 'Speed',    icon: I.speed,    view: () => viewSpeed() },
   history:  { name: 'History',  icon: I.history,  view: () => viewHistory() },
   advanced: { name: 'Advanced', icon: I.advanced, view: () => viewAdvanced() },
   about:    { name: 'About',    icon: I.about,    view: () => viewAbout() },
@@ -883,6 +885,109 @@ function engineNote() {
   return bad.map((d) => `<div class="dev-note" title="${esc(d.reason)}"><b>${DEV[d.device]}</b> ${esc(gist(d.reason))}</div>`).join('');
 }
 
+// ── speed ────────────────────────────────────────────────────────────────
+//
+// Reference numbers from one machine (speed.js, measured with `bench --json`
+// and `race`), so you can pick a model and a device before downloading
+// 3 GB of anything. Two series, CPU and DirectML: neutral ink and accent,
+// legend + a number on every bar, so it's never colour alone. Lower is
+// better. Bars past 4× the median get cut with a break mark and keep their
+// true number; a log axis would lie about how much slower they are.
+
+const SPEED = window.DV_SPEED || null;
+const SP_DEVS = ['cpu', 'directml'];
+const SP_METRICS = [
+  { id: 'idle', name: 'Sentence',     long: 'A 5-second sentence after 5 s of silence. This is push-to-talk as you actually use it.' },
+  { id: 'warm', name: 'Back to back', long: 'The same sentence with no pause, so the GPU never gets to clock down.' },
+  { id: 'long', name: '40 s clip',    long: 'A 40-second monologue. Throughput: where GPUs earn their keep.' },
+  { id: 'cold', name: 'First one',    long: 'The first sentence after the model loads. DirectML compiles kernels for each new input length.' },
+  { id: 'load', name: 'Load',         long: 'Loading the model from disk, once per start or model swap.' },
+];
+S.speed = pref.get('dv.speed', 'idle');
+const fms = (v) => (v < 1000 ? `${Math.round(v)} ms` : `${(v / 1000).toFixed(v < 10000 ? 2 : 1)} s`);
+const avgWer = (r) => r.wer.reduce((a, b) => a + b, 0) / r.wer.length;
+
+function viewSpeed() {
+  if (!SPEED) return `${head('Speed')}<div class="empty">No reference numbers in this build.</div>`;
+  const m = SP_METRICS.find((x) => x.id === S.speed) || SP_METRICS[0];
+  const val = (r, d, k = m.id) => r.dev[d]?.[k];
+  const best = (r, k = m.id) => Math.min(...SP_DEVS.map((d) => val(r, d, k)).filter((v) => v > 0));
+  const rows = SPEED.rows.slice().sort((a, b) => best(a) - best(b));
+  const all = rows.flatMap((r) => SP_DEVS.map((d) => val(r, d))).filter((v) => v > 0).sort((a, b) => a - b);
+  const cap = Math.min(all[all.length - 1], 4 * (all[Math.floor(all.length / 2)] || 1));
+
+  const bar = (r, d) => {
+    const v = val(r, d), err = r.dev[d]?.error;
+    if (err) return `<div class="sp-bar ${d} na" title="${esc(err)}"><span class="sp-v">won't run here</span></div>`;
+    if (!(v > 0)) return `<div class="sp-bar ${d} na"><span class="sp-v">—</span></div>`;
+    return `<div class="sp-bar ${d} ${v > cap ? 'over' : ''}" data-sp="${esc(r.id)}|${d}">
+      <i style="width:calc((100% - 62px) * ${Math.max(0.015, Math.min(v, cap) / cap).toFixed(4)})"></i><span class="sp-v">${fms(v)}</span></div>`;
+  };
+  // Who wins this metric for this model, and by how much.
+  const verdict = (r) => {
+    const [c, g] = SP_DEVS.map((d) => val(r, d));
+    if (!(c > 0) || !(g > 0)) return `<span class="sp-win cpu">CPU only</span>`;
+    const gpu = g < c, x = (gpu ? c / g : g / c);
+    return x < 1.1 ? '<span class="sp-win">tie</span>'
+      : `<span class="sp-win ${gpu ? 'gpu' : 'cpu'}">${gpu ? 'GPU' : 'CPU'} ${f1(x)}×</span>`;
+  };
+
+  // The four answers people come here for, computed from the data, never typed in.
+  const pairs = SPEED.rows.flatMap((r) => SP_DEVS.filter((d) => val(r, d, 'idle') > 0).map((d) => ({ r, d })));
+  const snap = pairs.slice().sort((a, b) => val(a.r, a.d, 'idle') - val(b.r, b.d, 'idle'))[0];
+  const fast = pairs.slice().sort((a, b) => val(a.r, a.d, 'long') - val(b.r, b.d, 'long'))[0];
+  const acc = SPEED.rows.slice().sort((a, b) => avgWer(a) - avgWer(b) || best(a, 'idle') - best(b, 'idle'))[0];
+  const gpuWins = SPEED.rows.filter((r) => val(r, 'directml', 'idle') > 0 && val(r, 'directml', 'idle') < val(r, 'cpu', 'idle')).length;
+  const rig = SPEED.rig;
+
+  return `${head('Speed', 'Measured, not guessed. One machine, every model, CPU vs GPU. Yours will differ: <a class="link" data-act="page" data-page="bench">race it →</a>')}
+    <div class="row sp-rig">
+      <span class="chip">${I.speed}${esc(rig.cpu)}</span><span class="chip">${esc(rig.gpu)}</span>
+      <span class="chip">${esc(rig.ram)}</span><span class="chip">${esc(rig.threads)} threads</span>
+      <span class="spacer"></span><span class="dim mono" style="font-size:11px">${esc(rig.when)}</span>
+    </div>
+    <div class="stats sp-stats">
+      ${tile('snappiest sentence', fms(val(snap.r, snap.d, 'idle')).split(' ')[0], fms(val(snap.r, snap.d, 'idle')).split(' ')[1], `${esc(snap.r.name)} · ${DEV[snap.d]}`, true)}
+      ${tile('fastest 40 s clip', fms(val(fast.r, fast.d, 'long')).split(' ')[0], fms(val(fast.r, fast.d, 'long')).split(' ')[1], `${esc(fast.r.name)} · ${DEV[fast.d]}`)}
+      ${tile('fewest errors', avgWer(acc).toFixed(1), '% wer', `${esc(acc.name)} · avg of ${acc.wer.length} clips`)}
+      ${tile('gpu wins a sentence', `${gpuWins}/${SPEED.rows.length}`, 'models', gpuWins * 2 < SPEED.rows.length ? 'mostly a CPU job' : 'the GPU earns it')}
+    </div>
+    <section class="card sp-card">
+      <div class="row" style="margin-bottom:4px">
+        <div class="seg">${SP_METRICS.map((x) => `<button class="${x.id === m.id ? 'on' : ''}" data-act="speed_metric" data-id="${x.id}">${x.name}</button>`).join('')}</div>
+        <span class="spacer"></span>
+        <span class="sp-key"><i class="cpu"></i>CPU</span><span class="sp-key"><i class="directml"></i>DirectML</span>
+      </div>
+      <p class="desc" style="margin:6px 0 10px">${m.long} Lower is better.</p>
+      <div class="sp-rows">${rows.map((r) => `<div class="sp-row">
+        <div class="sp-name"><b>${esc(r.name)}</b>${engChip(r.engine)}</div>
+        <div class="sp-bars">${SP_DEVS.map((d) => bar(r, d)).join('')}</div>
+        ${verdict(r)}
+        <span class="sp-wer" title="word error rate on the two built-in clips">${avgWer(r).toFixed(1)}%</span>
+      </div>`).join('')}</div>
+      <div class="tip" id="sp-tip"></div>
+    </section>`;
+}
+
+/// Bar hover: everything we measured for that model on that device.
+document.addEventListener('mouseover', (e) => {
+  const tip = document.getElementById('sp-tip');
+  if (!tip || !SPEED) return;
+  const b = e.target.closest?.('[data-sp]');
+  if (!b) { tip.classList.remove('on'); return; }
+  const [id, d] = b.dataset.sp.split('|');
+  const r = SPEED.rows.find((x) => x.id === id), x = r.dev[d];
+  tip.innerHTML = `<div class="tip-h">${esc(r.name)} · ${DEV[d]}</div><div class="tip-g">
+    <span>sentence</span><b>${fms(x.idle)}</b><span>back to back</span><i>${fms(x.warm)}</i>
+    <span>first one</span><i>${fms(x.cold)}</i><span>40 s clip</span><i>${fms(x.long)} · ${f1(x.long_xrt)}× real-time</i>
+    <span>load</span><i>${fms(x.load)}</i><span>wer</span><i>${r.wer.map((w) => `${w.toFixed(1)}%`).join(' · ')}</i></div>`;
+  const card = b.closest('.sp-card').getBoundingClientRect(), br = b.getBoundingClientRect();
+  tip.style.left = `${Math.min(br.left - card.left + 40, card.width - 250)}px`;
+  const above = br.top - card.top - tip.offsetHeight - 6;
+  tip.style.top = `${above >= 0 ? above : br.bottom - card.top + 6}px`; // no room above: hang below
+  tip.classList.add('on');
+});
+
 function viewAdvanced() {
   const c = cfg();
   const fb = c.fbdirector != null;
@@ -1227,6 +1332,7 @@ const ACT = {
     themeClose();
     ipc('set', { key: 'theme', value: id });
   },
+  speed_metric: (el) => { S.speed = el.dataset.id; pref.set('dv.speed', S.speed); render(); },
   model_info: (el) => { S.info = S.info === el.dataset.id ? null : el.dataset.id; render(); },
   // Right-click ▸ Benchmark: straight to the race, active model, current device.
   bench_go: () => { ACT.page({ dataset: { page: 'bench' } }); ACT.race_clip(); },

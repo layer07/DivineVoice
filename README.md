@@ -59,6 +59,7 @@ tray, so the app keeps listening. **Quit lives in the tray menu, and only there.
 | **Audio** | Pin a mic by name · min/max clip length |
 | **Perf** | The last 64 clips, timed from hotkey release to text delivered. p50/p95 latency, × real-time, words/s, your speaking pace in wpm, cold-start tax. A per-run bar chart with a stage breakdown (resample / queue / ASR / deliver). Numbers only, never your words |
 | **Benchmark** | Pick a clip, pick **one model or all installed**, pick **CPU, CUDA and/or DirectML**, hit **▶ Run**: the same recorded tape runs through every model × device, your active model first. Its verdict is revealed word by word in a terminal with a shimmer, with substitutions, misses and insertions marked, plus accuracy, WER, ASR time, × real-time and a letter grade. The rest race onto a leaderboard with a device chip and a *3.4× vs CPU* line on GPU rows; a GPU that can't come up gets a failed row saying why, never CPU numbers in a GPU costume. Click a row to see what that model heard. Optional play-along through the speakers, synth sound effects. Clips live in [`bench/`](bench/README.md) (baked in) or `%APPDATA%\DivineVoice\bench` (yours, no rebuild). Prefer your own voice? *Read it yourself* arms the hotkey against the clip's script |
+| **Speed** | Reference numbers for every model on CPU and DirectML, measured on an i9-14900KF + RTX 3080: a 5 s sentence after silence (push-to-talk as you use it), back to back, a 40 s clip, the first sentence after load, load time, WER. Verdict per model (*GPU 1.8×* / *CPU 2.4×*), hover a bar for the full set |
 | **History** | Opt-in list of recent transcripts, with copy and delete |
 | **Advanced** | **Device (CPU / CUDA / DirectML)** · ONNX threads · typing delays · Interception skip list · fbdirector bus · log level |
 
@@ -215,11 +216,27 @@ clips (warm median, 8 threads vs the 3080):
 | | WER (two clips) | CPU | DirectML |
 |---|---|---|---|
 | Parakeet v3 | 3.4% · 2.6% | 40× | **123–145×** |
-| Parakeet Ultra | 3.4% · 2.6% | 17–39× | 31–32× |
+| Parakeet Ultra | 3.4% · 2.6% | 26–39× | 31–32× |
 | Unified · int8 | 3.4% · 3.8% | 45× | 25–36× |
 | Nemotron 3.5 | **1.7% · 2.6%** | 7–8× | 4–5× (slower) |
 | Nemotron EN | 1.7% · 3.8% | 8× | slower |
 | Cohere Transcribe | **1.7% · 2.6%** | 2× | refused: its attention op breaks DirectML |
+
+**But that's throughput.** Push-to-talk is a short sentence after the machine
+sat idle, and an idle GPU has to clock back up. A 5 s sentence after 5 s of
+silence (`bench --first 5 --gap 5000`, p50):
+
+| | CPU | DirectML | |
+|---|---|---|---|
+| Parakeet v3 | 148 ms | **84 ms** | GPU 1.8× |
+| Parakeet Ultra | **130 ms** | 246 ms | CPU 1.9× |
+| Unified · int8 | **123 ms** | 291 ms | CPU 2.4× |
+| Nemotron 3.5 | **760 ms** | 1360 ms | CPU 1.8× |
+| Cohere Transcribe | 5.2 s | — | CPU only |
+
+The GPU wins one sentence out of seven models. DirectML numbers jump after the
+pause (Unified int8: 135 ms back to back, 291 ms after idle); CPU numbers don't
+move. The Speed page has all of it.
 
 Known-bad model × device pairs are refused up front with the reason, and the
 device buttons grey out for the model you have loaded. Every model's ⓘ shows
@@ -265,6 +282,7 @@ Measure your own machine:
 divinevoice bench some-speech.mp3 --thread-scan 1,2,4,6,8,12,16
 divinevoice bench some-speech.mp3 --model parakeet-unified --text   # any model, full transcript
 divinevoice bench --clip 02_leftmost_child --device directml         # same, on the GPU
+divinevoice bench --clip 02_leftmost_child --first 5 --gap 5000 --json   # a sentence after silence, as JSON
 ```
 
 That prints load, cold and warm timings (p50/p95), real-time factor and scaling
