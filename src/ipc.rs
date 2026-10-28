@@ -126,6 +126,17 @@ fn dispatch(state: &Arc<State>, cmd: &str, m: &Value) -> Result<Vec<String>> {
             refreshed(vec![toast("ok", "saved")])
         }
 
+        // Benchmark tab. Arm = next clip is an exam against `reference`.
+        "bench_arm" => {
+            let reference = str_arg("reference")?.to_owned();
+            let mut b = state.bench.lock();
+            *b = crate::state::Bench { armed: true, reference, take: None };
+            vec![]
+        }
+        "bench_disarm" => { state.disarm_bench(); vec![] }
+        "race" => { crate::race::start(Arc::clone(state))?; vec![] }
+        "race_cancel" => { state.race_cancel.store(true, Ordering::Release); vec![] }
+
         "learn" => { hotkey::learn(); vec![] }
         "learn_cancel" => { hotkey::cancel_learn(); vec![] }
 

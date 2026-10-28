@@ -86,6 +86,15 @@ pub enum ModelStatus {
     Failed  { dir: String, error: String },
 }
 
+/// The Benchmark tab's half of the world. While `armed`, a finished clip goes
+/// to the judge instead of your cursor, and its audio is kept for races.
+#[derive(Default)]
+pub struct Bench {
+    pub armed:     bool,
+    pub reference: String,
+    pub take:      Option<std::sync::Arc<Vec<f32>>>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Download {
     pub id:    String,
@@ -108,6 +117,9 @@ pub struct State {
     pub cfg:           RwLock<Config>,
     pub history:       History,
     pub perf:          Perf,
+    pub bench:         Mutex<Bench>,
+    pub racing:        AtomicBool,
+    pub race_cancel:   AtomicBool,
 }
 
 impl State {
@@ -125,6 +137,9 @@ impl State {
             cfg:           RwLock::new(cfg),
             history:       History::load(),
             perf:          Perf::load(),
+            bench:         Mutex::new(Bench::default()),
+            racing:        AtomicBool::new(false),
+            race_cancel:   AtomicBool::new(false),
         }
     }
 
@@ -146,6 +161,9 @@ impl State {
     pub fn input_device(&self) -> Option<String> { self.cfg.read().input_device.clone() }
 
     pub fn reload_model(&self) { self.model_gen.fetch_add(1, Ordering::AcqRel); }
+
+    /// Window hidden/closed or page left: dictation goes back to your cursor.
+    pub fn disarm_bench(&self) { self.bench.lock().armed = false; }
 }
 
 #[cfg(test)]

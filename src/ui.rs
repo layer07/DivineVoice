@@ -138,9 +138,15 @@ pub fn run(state: Arc<State>, open_at_start: bool) -> Result<()> {
                 // Our own titlebar. The page has no window handle; we do.
                 Some(Chrome::Drag) => if let Some(s) = &settings { let _ = s.window.drag_window(); },
                 // Minimise = hide to tray, WebView kept warm for an instant reopen.
-                Some(Chrome::Hide) => if let Some(s) = &settings { s.window.set_visible(false); },
+                // (Both also disarm the Benchmark tab: a hidden window must
+                // never swallow your dictation.)
+                Some(Chrome::Hide) => {
+                    state.disarm_bench();
+                    if let Some(s) = &settings { s.window.set_visible(false); }
+                }
                 // Close = to tray too, but the WebView2 process goes with it.
                 Some(Chrome::Close) => {
+                    state.disarm_bench();
                     hotkey_learn_abort();
                     settings = None;
                     info!("settings closed (still in the tray)");
@@ -161,6 +167,7 @@ pub fn run(state: Arc<State>, open_at_start: bool) -> Result<()> {
             }
 
             Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
+                state.disarm_bench();
                 hotkey_learn_abort();
                 settings = None; // drops the WebView2 process with it
                 info!("settings closed");

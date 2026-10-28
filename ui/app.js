@@ -73,6 +73,9 @@ const I = {
   audio:    svg('<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v4M8 22h8"/>'),
   history:  svg('<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 3"/>'),
   perf:     svg('<path d="M3 20h18"/><path d="M6 16v-3M10 16V8M14 16v-6M18 16V4"/>'),
+  bench:    svg('<rect x="3" y="4" width="18" height="16"/><path d="M7 9l3 3-3 3M12 15h5"/>'),
+  sound:    svg('<path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11"/>'),
+  mute:     svg('<path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M17 9l5 6M22 9l-5 6"/>'),
   advanced: svg('<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><rect x="14" y="4" width="4" height="4"/><rect x="8" y="10" width="4" height="4"/><rect x="16" y="16" width="4" height="4"/>'),
   about:    svg('<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7v.01"/>'),
   globe:    svg('<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/>'),
@@ -101,6 +104,7 @@ const PAGES = {
   models:   { name: 'Models',   icon: I.models,   view: () => viewModels() },
   audio:    { name: 'Audio',    icon: I.audio,    view: () => viewAudio() },
   perf:     { name: 'Perf',     icon: I.perf,     view: () => viewPerf() },
+  bench:    { name: 'Benchmark', icon: I.bench,   view: () => viewBench() },
   history:  { name: 'History',  icon: I.history,  view: () => viewHistory() },
   advanced: { name: 'Advanced', icon: I.advanced, view: () => viewAdvanced() },
   about:    { name: 'About',    icon: I.about,    view: () => viewAbout() },
@@ -462,6 +466,271 @@ document.addEventListener('mouseover', (e) => {
   tip.classList.add('on');
 });
 
+// ── benchmark ────────────────────────────────────────────────────────────
+//
+// Arm → read the passage with the hotkey → the take comes back graded by
+// wer.rs → shimmer-reveal the diff in a fake terminal → race the same take
+// through every installed model. All state lives in S.bench; the reveal is a
+// timer that only ever touches `.w[data-i]` spans, so a re-render mid-reveal
+// just picks up where it left off.
+
+const PASSAGES = {
+  classic: { label: 'Classic', text:
+    "The morning shift starts before the coffee does. Somewhere a pager buzzes, a build turns red, and a tired " +
+    "engineer squints at a wall of logs. She types nothing. She simply holds a key, describes the problem out loud, " +
+    "and watches her words land in the ticket exactly as she said them. No cloud heard her. No server kept a copy. " +
+    "The machine under her desk did the listening, quietly and quickly, and then went back to sleep. That is the " +
+    "whole trick: speak naturally, let go, and keep moving while the computer catches up with you." },
+  twisters: { label: 'Twisters', text:
+    "She sells seashells by the seashore, and the shells she sells are surely seashells. Peter Piper picked a peck " +
+    "of pickled peppers; where is the peck of pickled peppers Peter Piper picked? How much wood would a woodchuck " +
+    "chuck if a woodchuck could chuck wood? Red lorry, yellow lorry, red lorry, yellow lorry. Six slippery snails " +
+    "slid slowly seaward. Fuzzy Wuzzy was a bear, Fuzzy Wuzzy had no hair, so Fuzzy Wuzzy wasn't fuzzy, was he? " +
+    "Unique New York, unique New York, you know you need unique New York." },
+  devops: { label: 'DevOps', text:
+    "Roll back the canary deployment, the latency on the payments service just doubled. Check the Grafana dashboard, " +
+    "then grep the ingress logs for timeouts. If the pod keeps crash looping, cordon the node and drain it before the " +
+    "autoscaler spins up another one. Bump the memory limit in the Helm chart, open a pull request, and tag the " +
+    "on-call reviewer. After the merge, restart the deployment and watch the readiness probes. Write the postmortem " +
+    "tomorrow, blameless and boring, and add a runbook entry so nobody has to remember any of this at three in the morning." },
+  pt: { label: 'Português', text:
+    "Hoje de manhã o servidor caiu de novo, e ninguém sabia explicar porquê. A equipe abriu os registros, tomou um " +
+    "café bem forte e começou a investigar com calma. Primeiro verificaram a memória, depois a rede, e finalmente " +
+    "encontraram o culpado: um disco cheio de arquivos temporários esquecidos. Apagaram tudo, reiniciaram o serviço " +
+    "e respiraram aliviados. No fim do dia, escreveram um relatório simples, sem culpados, para que o próximo plantão " +
+    "não precisasse passar pelo mesmo susto. Às vezes, o problema mais assustador tem a solução mais boba do mundo." },
+};
+const READ_WPS = 2.6; // a comfortable reading pace, for the progress bar's ETA
+
+// Per-viewer convenience (sound on/off). localStorage can vanish; never trust it.
+const pref = {
+  get: (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch (_) { return d; } },
+  set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (_) { /* fine */ } },
+};
+
+S.bench = {
+  pid: 'classic', armed: false,
+  take: null,          // last bench_take payload
+  view: 'take',        // which result the terminal shows: 'take' or a race contender id
+  revealed: 0, revealFor: null, timer: null,
+  recStart: null, raf: null,
+  race: null,          // { running, lineup:[...], rows:{id: {...}} }
+};
+S.sfx = pref.get('dv.sfx', true);
+
+/// Synth SFX. Oscillators only, no audio files. The AudioContext is created
+/// on the ARM click, because browsers don't allow sound before a user gesture.
+const SFX = (() => {
+  let ctx = null;
+  const ac = () => (ctx ||= new (window.AudioContext || window.webkitAudioContext)());
+  const tone = (f, at, dur, type = 'square', gain = 0.03) => {
+    if (!S.sfx || !ctx) return;
+    const t = ctx.currentTime + at, o = ctx.createOscillator(), v = ctx.createGain();
+    o.type = type;
+    o.frequency.setValueAtTime(f, t);
+    v.gain.setValueAtTime(0.0001, t);
+    v.gain.exponentialRampToValueAtTime(gain, t + 0.005);
+    v.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(v).connect(ctx.destination);
+    o.start(t); o.stop(t + dur + 0.02);
+  };
+  const seq = (notes, step, dur, type, gain) => notes.forEach((f, i) => tone(f, i * step, dur, type, gain));
+  return {
+    unlock: () => { try { ac().resume(); } catch (_) { /* no audio device: stay silent */ } },
+    tick:   () => tone(2200 + Math.random() * 500, 0, 0.016, 'square', 0.010),
+    miss:   () => tone(150, 0, 0.09, 'sawtooth', 0.025),
+    arm:    () => seq([660, 990], 0.07, 0.08, 'triangle', 0.04),
+    rec:    () => tone(880, 0, 0.07, 'sine', 0.05),
+    good:   () => seq([523, 659, 784, 1047], 0.09, 0.16, 'triangle', 0.05),
+    meh:    () => seq([392, 330, 262], 0.11, 0.18, 'triangle', 0.045),
+    step:   () => tone(1320, 0, 0.03, 'triangle', 0.02),
+    win:    () => seq([784, 988, 1175, 1568, 1568], 0.08, 0.15, 'square', 0.025),
+  };
+})();
+
+const grade = (wer) => wer === 0 ? 'S' : wer < 0.02 ? 'A' : wer < 0.05 ? 'B' : wer < 0.10 ? 'C' : wer < 0.20 ? 'D' : 'F';
+const pct = (x) => `${(x * 100).toFixed(x < 0.1 ? 1 : 0)}`;
+const passage = () => PASSAGES[S.bench.pid];
+const wordCount = (t) => t.split(/\s+/).filter(Boolean).length;
+
+/// The ops currently on screen: the live take, or a race contender's.
+const viewOps = () => {
+  const b = S.bench;
+  if (b.view !== 'take') return b.race?.rows[b.view]?.score?.ops || null;
+  return b.take?.score?.ops || null;
+};
+
+const opSpan = (o, i) => {
+  const cls = { ok: 'ok', sub: 'sub', del: 'del', ins: 'ins' }[o.op];
+  const word = o.op === 'del' ? o.r : (o.h ?? o.w);
+  const tip = o.op === 'sub' ? ` title="expected: ${esc(o.r)}"` : o.op === 'del' ? ' title="missed"' : o.op === 'ins' ? ' title="not in the passage"' : '';
+  // Already-revealed words render settled (`done`) so a re-render mid-reveal
+  // doesn't re-shimmer the whole paragraph.
+  return `<span class="w ${cls} ${i < S.bench.revealed ? 'on done' : ''}" data-i="${i}"${tip}>${esc(word)}</span>`;
+};
+
+function termBody() {
+  const ops = viewOps();
+  if (!ops) {
+    // No result yet: the passage itself, dim, waiting to be read.
+    return passage().text.split(/\s+/).map((w) => `<span class="pw">${esc(w)}</span>`).join(' ');
+  }
+  const done = S.bench.revealed >= ops.length;
+  return ops.map(opSpan).join(' ') + (done ? '' : ' <span class="caret">▌</span>');
+}
+
+function termTitle() {
+  const b = S.bench;
+  const who = b.view === 'take' ? (b.take?.model || 'live') : (b.race?.rows[b.view]?.name || b.view);
+  return viewOps() ? `~/divinevoice $ judge --model "${esc(who)}"` : `~/divinevoice $ bench --read ${b.pid}`;
+}
+
+function benchStatus() {
+  const b = S.bench, mode = S.snap.status.mode, hk = keycaps(cfg().hotkey, 'small');
+  if (!b.armed) {
+    return `<button class="btn primary" data-act="bench_arm">▶ Arm</button>
+      <span class="dim">Arm, then ${cfg().hotkey_mode === 'toggle' ? 'tap' : 'hold'} ${hk} and read the passage out loud.</span>`;
+  }
+  const live = {
+    recording:    `<span class="rec-dot"></span><b class="mono">REC <span id="rec-t">00.0</span>s</b><span class="dim">read it like you mean it</span>`,
+    transcribing: `<span class="dot warn"></span><b class="mono">JUDGING…</b><span class="dim">Parakeet is listening back</span>`,
+  }[mode] || `<span class="dot rec"></span><b class="mono">ARMED</b><span class="dim">${cfg().hotkey_mode === 'toggle' ? 'Tap' : 'Hold'} ${hk} and read. Your dictation goes here, not to your cursor.</span>`;
+  return `${live}<span class="spacer"></span>
+    ${when(b.take && !b.race?.running, `<button class="btn" data-act="race">${I.models}Race all models</button>`)}
+    ${when(b.race?.running, `<button class="btn ghost" data-act="race_cancel">Stop race</button>`)}
+    <button class="btn ghost" data-act="bench_disarm">Disarm</button>`;
+}
+
+function benchScores() {
+  const t = S.bench.take;
+  if (!t || t.error || !t.score) return '';
+  const s = t.score, g = grade(s.wer);
+  const done = S.bench.view !== 'take' || S.bench.revealed >= s.ops.length;
+  return `<div class="stats bstats ${done ? 'in' : ''}">
+    ${tile('accuracy', pct(1 - Math.min(s.wer, 1)), '%', `${s.ref_words - s.errors}/${s.ref_words} words`, true)}
+    ${tile('wer', pct(s.wer), '%', `${s.errors} error${s.errors === 1 ? '' : 's'}`)}
+    ${tile('asr', f1(t.asr_ms), 'ms', `latency ${f1(t.latency_ms)} ms`)}
+    ${tile('speed', f1(t.audio_ms / Math.max(t.asr_ms, 0.1)), '×rt', `${(t.audio_ms / 1000).toFixed(1)}s of audio`)}
+    ${tile('your pace', f1(t.wpm), 'wpm', 'words per minute')}
+    <div class="stat grade g-${g}"><div class="label">grade</div><div class="grade-l">${g}</div></div>
+  </div>`;
+}
+
+function raceBoard() {
+  const r = S.bench.race;
+  if (!r) return '';
+  const rows = r.lineup.map((c) => ({ ...c, ...(r.rows[c.id] || {}) }));
+  const finished = rows.filter((x) => x.score);
+  const best = finished.slice().sort((a, b) => a.score.wer - b.score.wer || a.ms - b.ms)[0];
+  const order = r.running ? rows : rows.slice().sort((a, b) =>
+    (a.score ? 0 : 1) - (b.score ? 0 : 1) || (a.score?.wer ?? 9) - (b.score?.wer ?? 9) || (a.ms ?? 9e9) - (b.ms ?? 9e9));
+  const phase = (x) => x.error ? `<span class="b-err" title="${esc(x.error)}">failed</span>`
+    : x.score ? '<span class="dim">done</span>'
+    : x.phase ? `<span class="b-bar"><i style="width:${{ load: 15, warm: 30 }[x.phase] ?? (30 + 70 * (x.run - 1) / x.of)}%"></i></span><span class="mono dim">${x.phase === 'run' ? `run ${x.run}/${x.of}` : x.phase}</span>`
+    : '<span class="dim">queued</span>';
+  return `<div class="section-label">race · same take, every model ${when(!r.running && best, `· click a row to see what it heard`)}</div>
+    <div class="board">${order.map((x, i) => `
+      <div class="b-row ${best && x.id === best.id && !r.running ? 'best' : ''} ${S.bench.view === x.id ? 'viewing' : ''}" ${x.score ? `data-act="bench_view" data-id="${esc(x.id)}"` : ''}>
+        <span class="b-rank">${r.running ? '·' : x.score ? `#${i + 1}` : '–'}</span>
+        <span class="b-name">${esc(x.name)} <span class="chip">${x.engine === 'unified' ? 'RNNT' : 'TDT'}</span></span>
+        <span class="b-phase">${phase(x)}</span>
+        <span class="b-num">${x.ms ? `${f1(x.ms)} ms` : ''}</span>
+        <span class="b-num">${x.xrt ? `${f1(x.xrt)}×` : ''}</span>
+        <span class="b-num b-wer">${x.score ? `${pct(x.score.wer)}%` : ''}</span>
+      </div>`).join('')}</div>`;
+}
+
+function viewBench() {
+  const b = S.bench, p = passage(), n = wordCount(p.text);
+  const tabs = Object.entries(PASSAGES).map(([id, x]) =>
+    `<button class="${b.pid === id ? 'on' : ''}" data-act="bench_pick" data-id="${id}">${esc(x.label)}</button>`).join('');
+  return `${head('Benchmark', 'Read it out. We grade every word, then race every model on your take.')}
+    <div class="row" style="margin-bottom:10px">
+      <div class="seg">${tabs}</div>
+      <span class="dim mono" style="font-size:12px">${n} words · ~${Math.round(n / READ_WPS)} s${b.pid === 'pt' ? ' · Unified is English-only' : ''}</span>
+      <span class="spacer"></span>
+      <button class="btn ghost" data-act="sfx" title="sound effects">${S.sfx ? I.sound : I.mute}${S.sfx ? 'sfx on' : 'sfx off'}</button>
+    </div>
+    <div class="term ${b.armed ? 'armed' : ''}">
+      <div class="term-bar"><i></i><i></i><i></i><span id="term-title">${termTitle()}</span>
+        ${when(b.view !== 'take' && b.take, `<button class="term-back" data-act="bench_view" data-id="take">← your take</button>`)}</div>
+      <div class="term-body" id="term-body">${termBody()}</div>
+      <div class="term-prog"><i id="rec-bar"></i></div>
+    </div>
+    <div class="row bstat" id="bstat">${benchStatus()}</div>
+    ${when(b.take?.error, () => `<div class="err-line" style="padding:6px 0">✕ ${esc(b.take.error)}</div>`)}
+    <div id="bscores">${benchScores()}</div>
+    <div id="board">${raceBoard()}</div>`;
+}
+
+// Targeted refreshers: the reveal timer and race events must not rebuild the
+// whole page (it would restart animations and steal focus).
+const benchPart = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
+const refreshBench = () => {
+  if (S.page !== 'bench') return;
+  benchPart('bstat', benchStatus());
+  benchPart('bscores', benchScores());
+  benchPart('board', raceBoard());
+  const tt = document.getElementById('term-title'); if (tt) tt.innerHTML = termTitle();
+};
+
+/// Reveal the current view's ops one word at a time: shimmer + tick per word,
+/// a low blip per miss, and a verdict jingle at the end.
+function startReveal() {
+  const b = S.bench;
+  clearInterval(b.timer);
+  b.revealed = 0;
+  benchPart('term-body', termBody());
+  const ops = viewOps() || [];
+  const per = Math.max(14, Math.min(45, 2800 / Math.max(ops.length, 1)));
+  b.timer = setInterval(() => {
+    const i = b.revealed;
+    if (i >= ops.length) {
+      clearInterval(b.timer);
+      document.querySelector('#term-body .caret')?.remove();
+      const s = b.view === 'take' ? b.take?.score : b.race?.rows[b.view]?.score;
+      if (s && b.view === 'take') (['S', 'A'].includes(grade(s.wer)) ? SFX.good : SFX.meh)();
+      refreshBench();
+      return;
+    }
+    const el = document.querySelector(`#term-body .w[data-i="${i}"]`);
+    if (el) {
+      el.classList.add('on');
+      const caret = document.querySelector('#term-body .caret');
+      if (caret) el.after(caret);
+      el.scrollIntoView({ block: 'nearest' });
+    }
+    (ops[i].op === 'ok' ? SFX.tick : SFX.miss)();
+    b.revealed = i + 1;
+  }, per);
+}
+
+/// Recording clock + progress bar (elapsed vs. the passage's reading ETA).
+function recLoop() {
+  const b = S.bench;
+  cancelAnimationFrame(b.raf);
+  const eta = wordCount(passage().text) / READ_WPS;
+  const frame = () => {
+    if (b.recStart == null) return;
+    const s = (performance.now() - b.recStart) / 1000;
+    const t = document.getElementById('rec-t'); if (t) t.textContent = s.toFixed(1).padStart(4, '0');
+    const bar = document.getElementById('rec-bar');
+    if (bar) { bar.style.width = `${Math.min(100, (s / eta) * 100)}%`; bar.classList.toggle('over', s > eta); }
+    b.raf = requestAnimationFrame(frame);
+  };
+  b.raf = requestAnimationFrame(frame);
+}
+
+const benchDisarm = () => {
+  if (!S.bench.armed) return;
+  S.bench.armed = false;
+  S.bench.recStart = null;
+  ipc('bench_disarm');
+};
+
+// A hidden page must never keep eating dictation (Rust disarms too; belt + braces).
+document.addEventListener('visibilitychange', () => { if (document.hidden) { benchDisarm(); refreshBench(); } });
+
 function viewAdvanced() {
   const c = cfg();
   const fb = c.fbdirector != null;
@@ -603,6 +872,17 @@ const ON = {
     const hero = $('#hero');
     if (hero) hero.outerHTML = heroHtml();
     renderChrome();
+    // Benchmark: start/stop the reading clock with the hotkey.
+    const b = S.bench;
+    if (b.armed && d.mode === 'recording' && b.recStart == null) {
+      b.recStart = performance.now();
+      SFX.rec();
+      if (b.view !== 'take' || b.take) { b.take = null; b.view = 'take'; clearInterval(b.timer); b.revealed = 0; benchPart('term-body', termBody()); }
+      recLoop();
+    } else if (d.mode !== 'recording') {
+      b.recStart = null;
+    }
+    refreshBench();
   },
   download: (d) => {
     S.snap.download = d;
@@ -628,6 +908,37 @@ const ON = {
     if (S.page === 'history') render();
   },
   toast: (d) => toast(d.kind, d.msg),
+
+  // ── benchmark ──
+  bench_take: (d) => {
+    const b = S.bench;
+    b.take = d; b.view = 'take'; b.race = null;
+    if (S.page !== 'bench') return;
+    refreshBench();
+    if (d.score) startReveal();
+  },
+  race_start: (d) => {
+    S.bench.race = { running: true, lineup: d.lineup, rows: {} };
+    refreshBench();
+  },
+  race_step: (d) => {
+    const r = S.bench.race; if (!r) return;
+    r.rows[d.id] = { ...(r.rows[d.id] || {}), phase: d.phase, run: d.run, of: d.of };
+    if (d.phase === 'load') SFX.step();
+    benchPart('board', raceBoard());
+  },
+  race_result: (d) => {
+    const r = S.bench.race; if (!r) return;
+    r.rows[d.id] = { ...(r.rows[d.id] || {}), ...d };
+    (d.error ? SFX.miss : SFX.step)();
+    benchPart('board', raceBoard());
+  },
+  race_end: (d) => {
+    const r = S.bench.race; if (!r) return;
+    r.running = false;
+    if (!d.cancelled && Object.values(r.rows).some((x) => x.score)) SFX.win();
+    refreshBench();
+  },
   perf: (d) => {
     S.snap.perf = d;
     // Don't yank the table out from under someone typing in perf_max.
@@ -656,7 +967,34 @@ const armed = (tag, fire) => {
 };
 
 const ACT = {
-  page: (el) => { S.page = el.dataset.page; S.confirm = null; render(); $('#page').scrollTop = 0; },
+  page: (el) => {
+    if (S.page === 'bench' && el.dataset.page !== 'bench') benchDisarm(); // leaving = dictation back to your cursor
+    S.page = el.dataset.page; S.confirm = null; render(); $('#page').scrollTop = 0;
+  },
+  // ── benchmark ──
+  bench_pick: (el) => {
+    const b = S.bench;
+    b.pid = el.dataset.id; b.take = null; b.race = null; b.view = 'take'; b.revealed = 0; clearInterval(b.timer);
+    if (b.armed) ipc('bench_arm', { reference: passage().text }); // re-arm against the new passage
+    render();
+  },
+  bench_arm: () => {
+    SFX.unlock(); // the click is our one chance to get an AudioContext
+    S.bench.armed = true;
+    ipc('bench_arm', { reference: passage().text });
+    SFX.arm();
+    refreshBench();
+    document.querySelector('.term')?.classList.add('armed');
+  },
+  bench_disarm: () => { benchDisarm(); refreshBench(); document.querySelector('.term')?.classList.remove('armed'); },
+  race: () => ipc('race'),
+  race_cancel: () => ipc('race_cancel'),
+  bench_view: (el) => {
+    S.bench.view = el.dataset.id;
+    render();
+    startReveal();
+  },
+  sfx: () => { S.sfx = !S.sfx; pref.set('dv.sfx', S.sfx); SFX.unlock(); render(); },
   step: (el, e) => {
     const input = document.getElementById(el.dataset.for);
     if (!input) return;

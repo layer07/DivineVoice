@@ -182,6 +182,13 @@ pub fn run(state: &State, clips: &Receiver<Clip>, out: &Sender<Transcript>) -> R
             continue;
         };
 
+        // Benchmark tab armed? Then this clip is an exam, not dictation: keep
+        // the audio for races and route the verdict to the judge.
+        let exam = {
+            let b = state.bench.lock();
+            b.armed.then(|| (b.reference.clone(), std::sync::Arc::new(pcm.clone())))
+        };
+
         let queue_ms = perf::ms(sw.enqueued.elapsed());
         let t0 = Instant::now();
         let result = transcribe(m, pcm);
@@ -192,6 +199,12 @@ pub fn run(state: &State, clips: &Receiver<Clip>, out: &Sender<Transcript>) -> R
             let c = state.cfg.read();
             (c.model_dir.clone(), c.intra_threads, c.history, c.history_max)
         };
+
+        if let Some((reference, audio)) = exam {
+            state.advance(Mode::Transcribing, Mode::Idle);
+            grade(state, &reference, audio, result, &sw, asr_ms, &model_name(&dir));
+            continue;
+        }
         let ts = |text: String| Transcript {
             text, sw: sw.clone(), queue_ms, asr_ms, cold: was_cold, model: model_name(&dir), threads,
         };
@@ -221,4 +234,29 @@ pub fn run(state: &State, clips: &Receiver<Clip>, out: &Sender<Transcript>) -> R
         }
     }
     Ok(())
+}
+
+/// Score a Benchmark-tab take and hand the verdict to the page. The audio is
+/// parked in State so "Race" can replay the exact same take through every
+/// model: same breath, same "uh", same mic hiss.
+fn grade(
+    state: &State, reference: &str, audio: std::sync::Arc<Vec<f32>>,
+    result: Result<String>, sw: &perf::Stopwatch, asr_ms: f64, model: &str,
+) {
+    state.bench.lock().take = Some(audio);
+    let payload = match result {
+        Ok(text) => {
+            let score = crate::wer::align(reference, &text);
+            info!("bench take: {:.1}% WER ({}/{}) in {asr_ms} ms", score.wer * 100.0, score.errors, score.ref_words);
+            let words = text.split_whitespace().count() as f64;
+            serde_json::json!({
+                "text": text, "score": score, "model": model,
+                "audio_ms": sw.audio_ms, "asr_ms": asr_ms,
+                "latency_ms": perf::ms(sw.released.elapsed()),
+                "wpm": if sw.audio_ms > 0.0 { words / (sw.audio_ms / 60_000.0) } else { 0.0 },
+            })
+        }
+        Err(e) => serde_json::json!({ "error": format!("{e:#}") }),
+    };
+    ui::push("bench_take", &payload);
 }

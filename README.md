@@ -58,6 +58,7 @@ tray, so the app keeps listening. **Quit lives in the tray menu, and only there.
 | **Models** | Download, switch and delete models. Accuracy/speed bars, resumable downloads with live progress, or point at your own ONNX folder |
 | **Audio** | Pin a mic by name · min/max clip length |
 | **Perf** | The last 64 clips, timed from hotkey release to text delivered. p50/p95 latency, × real-time, words/s, your speaking pace in wpm, cold-start tax. A per-run bar chart with a stage breakdown (resample / queue / ASR / deliver). Numbers only, never your words |
+| **Benchmark** | Pick a passage (Classic, Twisters, DevOps, Português), **Arm**, and read it with the hotkey. The take comes back graded word by word in a terminal, with a shimmer reveal, substitutions/misses/insertions marked, accuracy, WER, latency, × real-time, your wpm and a letter grade. Then **Race**: the same recording runs through every installed model, and you click a row to see what that model heard. Synth sound effects, toggleable. While armed, dictation goes to the benchmark, not your cursor; leaving the tab or hiding the window disarms it |
 | **History** | Opt-in list of recent transcripts, with copy and delete |
 | **Advanced** | Typing delays · ONNX threads · Interception skip list · fbdirector bus · log level |
 
@@ -238,6 +239,8 @@ and `app.css` uses only those tokens.
 | `asr.rs` | Model load (TDT or Unified engine), warm-up, hot swap, inference |
 | `models.rs` | Catalogue, engine detection, resumable HuggingFace downloader |
 | `perf.rs` | Per-clip stopwatch, 64-entry ring, pure p50/p95/xRT/wps/wpm stats |
+| `wer.rs` | The judge: word-level Levenshtein → ok/sub/del/ins + WER. Pure |
+| `race.rs` | Replays one Benchmark take through every installed model, one in RAM at a time |
 | `history.rs` | Opt-in transcript history |
 | `inject.rs` | The four output modes and the fallback ladder |
 | `keymap.rs` | char → set-1 scancode as a keyboard-shaped table. Pure |

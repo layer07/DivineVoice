@@ -60,9 +60,11 @@ mod ipc;
 mod keymap;
 mod models;
 mod perf;
+mod race;
 mod state;
 mod tray;
 mod ui;
+mod wer;
 
 use anyhow::{bail, Result};
 use crossbeam_channel::unbounded;
