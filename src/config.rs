@@ -113,6 +113,16 @@ pub struct Config {
     /// says why on the Models page; it never silently pretends.
     pub device: Device,
 
+    /// "auto", or an ISO 639-1 code ("en", "pt", "ja"…). Parakeet TDT always
+    /// auto-detects and English-only models ignore it. Nemotron 3.5 gets more
+    /// accurate when you pin it. Cohere Transcribe can't detect at all and
+    /// needs it (auto = English there).
+    pub language: String,
+
+    /// UI skin, an id from ui/themes.js ("default" = corpo-doom). Cosmetic;
+    /// lives here so it survives the WebView's storage being wiped.
+    pub theme: String,
+
     /// Mic pin: case-insensitive substring of the device name ("QuadCast").
     /// Unset = Windows default input. Resolved on every press.
     pub input_device: Option<String>,
@@ -164,6 +174,8 @@ impl Default for Config {
             model_dir:       default_model_dir(),
             inject_mode:     InjectMode::Paste,
             device:          Device::Cpu,
+            language:        "auto".into(),
+            theme:           "default".into(),
             input_device:    None,
             min_ms:          250,
             max_ms:          120_000,
@@ -238,14 +250,20 @@ fn default_model_dir() -> PathBuf {
         .unwrap_or_else(|| crate::models::CATALOGUE[0].dir())
 }
 
-/// A model dir: some encoder*.onnx + some decoder_joint*.onnx (fp32 or int8,
-/// parakeet-rs picks whichever is there) + a vocabulary: vocab.txt (TDT) or
-/// tokenizer.model (Unified).
+/// A model dir, either shape:
+///   transducer (TDT / Unified / Nemotron): encoder*.onnx + decoder_joint*.onnx
+///     + vocab.txt or tokenizer.model
+///   encoder-decoder (Cohere): encoder_model*.onnx + decoder_model_merged*.onnx
+///     + tokenizer.json, flat or under onnx/ (the HuggingFace layout)
+/// fp32 or int8, parakeet-rs picks whichever is there.
 pub fn looks_like_model(dir: &Path) -> bool {
-    let has = |prefix: &str| std::fs::read_dir(dir).into_iter().flatten().flatten()
+    let has = |d: &Path, prefix: &str| std::fs::read_dir(d).into_iter().flatten().flatten()
         .any(|e| e.file_name().to_str().is_some_and(|n| n.starts_with(prefix) && n.ends_with(".onnx")));
     let vocab = dir.join("vocab.txt").is_file() || dir.join("tokenizer.model").is_file();
-    vocab && has("encoder") && has("decoder_joint")
+    let transducer = vocab && has(dir, "encoder") && has(dir, "decoder_joint");
+    let aed = dir.join("tokenizer.json").is_file()
+        && [dir.to_path_buf(), dir.join("onnx")].iter().any(|d| has(d, "encoder_model") && has(d, "decoder_model_merged"));
+    transducer || aed
 }
 
 /// Half the logical CPUs (≈ physical cores with SMT), clamped to [1, 8].

@@ -38,7 +38,7 @@
 
 use anyhow::{anyhow, bail, Context, Result};
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Instant;
 
 use crate::audio::SR;
@@ -56,6 +56,7 @@ struct Opts {
     threads:   Vec<Option<usize>>,
     text:      bool,
     device:    Device,
+    lang:      String,
 }
 
 struct Run { threads: Option<usize>, load_ms: u128, cold_ms: u128, warm_ms: Vec<u128> }
@@ -63,7 +64,7 @@ struct Run { threads: Option<usize>, load_ms: u128, cold_ms: u128, warm_ms: Vec<
 const USAGE: &str = "usage: divinevoice bench <audio-file> [--reference script.txt]\n\
                      \x20      divinevoice bench --clip <id>      (a benchmark clip; graded against its script)\n\
                      \x20  options: --model <dir|catalogue-id>  --iters N  --thread-scan 1,2,4,8  --text\n\
-                     \x20           --device cpu|cuda|directml";
+                     \x20           --device cpu|cuda|directml  --lang auto|en|pt|ja…";
 
 pub fn run(args: &[String], cfg: &Config) -> Result<()> {
     let o = parse(args, cfg)?;
@@ -92,7 +93,7 @@ pub fn run(args: &[String], cfg: &Config) -> Result<()> {
     let runs: Vec<Run> = o.threads.iter()
         .filter_map(|&t| {
             println!("═══ {} ═══", fmt_threads(t));
-            bench_one(t, o.device, &pcm, o.iters, &o.model, o.text, script.as_deref())
+            bench_one(t, &o, &pcm, script.as_deref())
                 .inspect(|r| print_run(r, secs))
                 .inspect_err(|e| println!("  ERROR: {}\n", asr::explain(o.device, &format!("{e:#}"))))
                 .ok()
@@ -112,6 +113,7 @@ fn parse(args: &[String], cfg: &Config) -> Result<Opts> {
     let mut threads = vec![cfg.threads()];
     let mut text = false;
     let mut device = cfg.device;
+    let mut lang = cfg.language.clone();
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut val = |flag: &str| it.next().ok_or_else(|| anyhow!("{flag} needs a value"));
@@ -128,6 +130,7 @@ fn parse(args: &[String], cfg: &Config) -> Result<Opts> {
             "--clip"         => clip = Some(val("--clip")?.clone()),
             "--reference" | "-r" => reference = Some(PathBuf::from(val("--reference")?)),
             "--text" => text = true,
+            "--lang" | "-l" => lang = val("--lang")?.to_lowercase(),
             "--device" | "-d" => device = val("--device").and_then(|v| Device::ALL.into_iter()
                 .find(|d| d.label() == v.to_ascii_lowercase())
                 .ok_or_else(|| anyhow!("--device wants cpu, cuda or directml, got {v:?}")))?,
@@ -149,7 +152,7 @@ fn parse(args: &[String], cfg: &Config) -> Result<Opts> {
         }
     };
     if threads.is_empty() { bail!("--thread-scan needs at least one number"); }
-    Ok(Opts { input, reference, model, iters: iters.max(1), threads, text, device })
+    Ok(Opts { input, reference, model, iters: iters.max(1), threads, text, device, lang })
 }
 
 /// "  wer   2.1%  (2/97)  steel→steal · −who · +the"
@@ -173,10 +176,8 @@ fn ms_of<T>(f: impl FnOnce() -> T) -> (T, u128) {
     (r, t.elapsed().as_millis())
 }
 
-fn bench_one(
-    threads: Option<usize>, device: Device, pcm: &[f32], iters: usize, dir: &Path, full_text: bool, script: Option<&str>,
-) -> Result<Run> {
-    let (model, load_ms) = ms_of(|| asr::load_on(dir, threads, device, true));
+fn bench_one(threads: Option<usize>, o: &Opts, pcm: &[f32], script: Option<&str>) -> Result<Run> {
+    let (model, load_ms) = ms_of(|| asr::load_on(&o.model, threads, o.device, true, &o.lang));
     let mut model = model?.model;
     println!("  load  {load_ms} ms");
 
@@ -184,8 +185,9 @@ fn bench_one(
     let text = text?;
     println!("  cold  {cold_ms} ms → {:?}", clip(&text, 60));
     if let Some(s) = script { print_grade(s, &text); }
-    if full_text { println!("\n--- transcript ---\n{text}\n------------------\n"); }
+    if o.text { println!("\n--- transcript ---\n{text}\n------------------\n"); }
 
+    let iters = o.iters;
     let warm_ms = (1..=iters)
         .map(|n| {
             let (r, ms) = ms_of(|| asr::transcribe(&mut model, pcm.to_vec()));

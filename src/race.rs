@@ -146,7 +146,7 @@ pub fn start(state: Arc<State>, take: Arc<Vec<f32>>, reference: String, scope: S
         let needs_vram = field.iter().any(|c| c.device != Device::Cpu) && dictation_on_gpu(&state);
         let _lap = Lap { state: &state, parked: needs_vram }; // armed BEFORE parking, so nothing can skip the unpark
         if needs_vram { park(&state); }
-        let threads = state.cfg.read().threads();
+        let (threads, lang) = { let c = state.cfg.read(); (c.threads(), c.language.clone()) };
         let audio_ms = take.len() as f64 * 1000.0 / SR as f64;
         let cancelled = || state.race_cancel.load(Ordering::Acquire);
 
@@ -157,7 +157,7 @@ pub fn start(state: Arc<State>, take: Arc<Vec<f32>>, reference: String, scope: S
             let outcome = (|| -> Result<serde_json::Value> {
                 step("load", 0);
                 let t0 = Instant::now();
-                let mut m = asr::load_on(&c.dir, threads, c.device, true)?.model;
+                let mut m = asr::load_on(&c.dir, threads, c.device, true, &lang)?.model;
                 let load_ms = perf::ms(t0.elapsed());
 
                 step("warm", 0);

@@ -54,13 +54,21 @@ tray, so the app keeps listening. **Quit lives in the tray menu, and only there.
 
 | Page | What's in it |
 |---|---|
-| **Core** | Live status · **rebind the shortcut** (click *Rebind*, press any chord; Esc cancels) · Hold vs Toggle · output method |
-| **Models** | Download, switch and delete models. Accuracy/speed bars, resumable downloads with live progress, or point at your own ONNX folder |
+| **Core** | Live status · **rebind the shortcut** (click *Rebind*, press any chord; Esc cancels) · Hold vs Toggle · **engine: one-click CPU ⇄ CUDA ⇄ DirectML, and the language** · output method |
+| **Models** | Download, switch and delete models. Accuracy/speed bars, resumable downloads with live progress, or point at your own ONNX folder. **ⓘ on every model** opens its papers: who made it, when, size, architecture, license, languages, published WER, what our race measured, and a plain *pick it if / skip it if* |
 | **Audio** | Pin a mic by name · min/max clip length |
 | **Perf** | The last 64 clips, timed from hotkey release to text delivered. p50/p95 latency, × real-time, words/s, your speaking pace in wpm, cold-start tax. A per-run bar chart with a stage breakdown (resample / queue / ASR / deliver). Numbers only, never your words |
 | **Benchmark** | Pick a clip, pick **one model or all installed**, pick **CPU, CUDA and/or DirectML**, hit **▶ Run**: the same recorded tape runs through every model × device, your active model first. Its verdict is revealed word by word in a terminal with a shimmer, with substitutions, misses and insertions marked, plus accuracy, WER, ASR time, × real-time and a letter grade. The rest race onto a leaderboard with a device chip and a *3.4× vs CPU* line on GPU rows; a GPU that can't come up gets a failed row saying why, never CPU numbers in a GPU costume. Click a row to see what that model heard. Optional play-along through the speakers, synth sound effects. Clips live in [`bench/`](bench/README.md) (baked in) or `%APPDATA%\DivineVoice\bench` (yours, no rebuild). Prefer your own voice? *Read it yourself* arms the hotkey against the clip's script |
 | **History** | Opt-in list of recent transcripts, with copy and delete |
 | **Advanced** | **Device (CPU / CUDA / DirectML)** · ONNX threads · typing delays · Interception skip list · fbdirector bus · log level |
+
+Two things live outside the pages. The **swatch button on the titlebar** is
+the theme picker: 40 themes from the ElectricWizard set, each shown as its
+accent / surface / text stripes. Hover one and the whole app repaints live;
+move off and it snaps back; click to keep it. **Right-click** anywhere gives
+our own menu instead of a browser's: device switch, model switch, *Benchmark
+this setup*, copy the last transcript, logs, minimise / close to tray. Text
+fields keep the normal cut/copy/paste menu. Esc minimises to the tray.
 
 Every change saves to `config.toml` and applies live. A new hotkey works on the
 next keypress, and a new model loads in the background.
@@ -73,6 +81,9 @@ next keypress, and a new model loads in the background.
 | Parakeet Unified · int8 | 660 MB | English | RNNT | [NVIDIA parakeet-unified-en-0.6b](https://huggingface.co/nvidia/parakeet-unified-en-0.6b) (2026), quantized |
 | Parakeet Unified | 2.5 GB | English | RNNT | Same, full precision |
 | Parakeet v3 | 2.5 GB | 25 European | TDT | Stock [NVIDIA v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3). The reference |
+| Cohere Transcribe · int8 | 3.1 GB | 14, **must be set** | AED | [Cohere's 2B model](https://huggingface.co/CohereLabs/cohere-transcribe-03-2026), #1 on the Open ASR leaderboard at release (5.42%). Apache-2.0 |
+| Nemotron 3.5 | 2.6 GB | 40 locales | RNNT·S | [NVIDIA's multilingual streaming model](https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b): Japanese, Chinese, Korean, Arabic, Hindi, Turkish… |
+| Nemotron Streaming · English | 2.5 GB | English | RNNT·S | [NVIDIA's low-latency English model](https://huggingface.co/nvidia/nemotron-speech-streaming-en-0.6b), 530k hours of training |
 
 Our own race: a 53 s English clip, 8 threads on an i9-14900K, warm p50.
 
@@ -92,6 +103,15 @@ model: 5.91 % offline WER vs 6.04 for v2 and 6.34 for v3. It's an RNNT, so it
 runs on a second engine path. Both engines come from
 [parakeet-rs](https://github.com/altunenes/parakeet-rs), and DivineVoice picks
 the right one from the files in the folder.
+
+**Language.** Parakeet TDT models detect the language per clip on their own,
+and English-only models don't care. **Cohere can't detect at all**: set Core ▸
+language, or it transcribes as English. Nemotron 3.5 detects, but is more
+accurate when you pin it. Clips longer than 35 s are cut at the quietest
+moment for Cohere (it was trained on ≤35 s) and glued back together.
+
+Skipped on purpose: an int8 Nemotron that's under a non-compete license
+(PolyForm Shield), and Cohere fp32 (7.6 GB; int8 is the sane download).
 
 We don't host weights. Each model downloads from the ONNX export credited on
 its card (hover the blurb). Any other Parakeet TDT or Unified ONNX folder works
@@ -149,6 +169,8 @@ hotkey_mode     = "hold"        # hold (walkie-talkie) | toggle (tap on, tap off
 model_dir       = 'C:\path\to\model'
 inject_mode     = "paste"       # paste | paste_plain | unicode | type
 device          = "cpu"         # cpu | directml (any DX12 GPU) | cuda (NVIDIA). A GPU that won't come up falls back to CPU, and says why
+language        = "auto"        # or "en", "pt", "ja"… Cohere needs it; Nemotron 3.5 likes it; Parakeet ignores it
+theme           = "default"     # any id from ui/themes.js: lain, matrix, phosphor-amber, light-sakura…
 # input_device  = "QuadCast"    # pin a mic by name substring; omit = Windows default
 min_ms          = 250           # shorter clips = accidental tap, discarded
 max_ms          = 120000        # hard cap per clip
@@ -185,7 +207,23 @@ Then DirectML on an RTX 3080 did this to a 40 s clip (`race`, warm median):
 | Parakeet v3 | 976 ms · 41× | **288 ms · 138×** | 3.4× faster |
 | Parakeet Ultra | ~1600 ms · 25× | 1096 ms · 36× | 1.5× faster |
 
-Same model, same words, same WER. Speed is the only thing that changes. So now
+Same model, same words, same WER. Speed is the only thing that changes.
+
+Not every model likes a GPU, though. From racing all seven on both built-in
+clips (warm median, 8 threads vs the 3080):
+
+| | WER (two clips) | CPU | DirectML |
+|---|---|---|---|
+| Parakeet v3 | 3.4% · 2.6% | 40× | **123–145×** |
+| Parakeet Ultra | 3.4% · 2.6% | 17–39× | 31–32× |
+| Unified · int8 | 3.4% · 3.8% | 45× | 25–36× |
+| Nemotron 3.5 | **1.7% · 2.6%** | 7–8× | 4–5× (slower) |
+| Nemotron EN | 1.7% · 3.8% | 8× | slower |
+| Cohere Transcribe | **1.7% · 2.6%** | 2× | refused: its attention op breaks DirectML |
+
+Known-bad model × device pairs are refused up front with the reason, and the
+device buttons grey out for the model you have loaded. Every model's ⓘ shows
+these numbers. So now
 you pick (Advanced ▸ Engine), and you **measure instead of guess**: Benchmark ▸
 choose models ▸ toggle CPU + DirectML ▸ Run.
 
@@ -281,9 +319,9 @@ and `app.css` uses only those tokens.
 | `hotkey.rs` | `WH_KEYBOARD_LL` hook. Hold/toggle and "learn a new chord" are pure, unit-tested `step()` functions |
 | `binding.rs` | `"Ctrl+Shift+F13"` ⇄ (mods, VK). Parse, format, sanity checks. Pure |
 | `audio.rs` | Mic capture, generic over every cpal sample format |
-| `dsp.rs` | `downmix` and `resample` (boxcar decimator / linear interpolator). Pure |
+| `dsp.rs` | `downmix`, `resample` (boxcar decimator / linear interpolator), `split_at_quiet` (long clips cut between words). Pure |
 | `asr.rs` | Model load (TDT or Unified engine) on CPU/CUDA/DirectML, honest GPU probe, warm-up, hot swap, parking, GPU→CPU rescue, inference |
-| `models.rs` | Catalogue, engine detection, resumable HuggingFace downloader |
+| `models.rs` | Catalogue with each model's papers (facts for the ⓘ panel), engine detection, resumable HuggingFace downloader |
 | `perf.rs` | Per-clip stopwatch, 64-entry ring, pure p50/p95/xRT/wps/wpm stats |
 | `wer.rs` | The judge: word-level Levenshtein → ok/sub/del/ins + WER. Pure |
 | `race.rs` | Replays one clip or take through the chosen models × devices, active first, one in RAM at a time |
@@ -298,7 +336,7 @@ and `app.css` uses only those tokens.
 | `tray.rs` | Tray icon and menu |
 | `bus.rs` | Optional fbdirector handshake |
 | `bench.rs` | The benchmark subcommand |
-| `ui/` | `index.html`, `theme.css` (corpo-doom tokens), `app.css`, `app.js` (no framework, pure views), `mascot.webp` |
+| `ui/` | `index.html`, `theme.css` (corpo-doom tokens), `themes.js` (40 baked skins), `app.css`, `app.js` (no framework, pure views), `mascot.webp` |
 
 House rules:
 - The realtime callback does nothing clever.

@@ -75,9 +75,61 @@ pub fn resample(x: &[f32], from: u32, to: u32) -> Vec<f32> {
         .collect()
 }
 
+/// Cut `x` into pieces of at most `max` samples. Each cut lands in the
+/// quietest `win`-sample stretch of the last `look` samples before the limit:
+/// the breath between words, not the middle of one. The ranges tile `x`
+/// exactly, in order. Empty in, nothing out.
+///
+/// Why: Cohere Transcribe was trained on ≤35 s clips and drifts past that, and
+/// parakeet-rs leaves the chunking policy to us. Same trick as Cohere's own
+/// reference code, minus the Python.
+pub fn split_at_quiet(x: &[f32], max: usize, look: usize, win: usize) -> Vec<std::ops::Range<usize>> {
+    let (max, win) = (max.max(2), win.max(1));
+    let energy = |at: usize| x[at..at + win].iter().map(|s| s * s).sum::<f32>();
+    let mut out = Vec::new();
+    let mut start = 0;
+    while x.len() - start > max {
+        let end = start + max;
+        let from = end.saturating_sub(look).max(start + 1);
+        let cut = (from..=end.saturating_sub(win))
+            .step_by((win / 2).max(1))
+            .min_by(|&a, &b| energy(a).total_cmp(&energy(b)))
+            .map_or(end, |a| a + win / 2);
+        out.push(start..cut);
+        start = cut;
+    }
+    if start < x.len() { out.push(start..x.len()); }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn short_audio_is_one_piece() {
+        assert_eq!(split_at_quiet(&[0.5; 100], 1000, 200, 10), vec![0..100]);
+        assert!(split_at_quiet(&[], 1000, 200, 10).is_empty());
+    }
+
+    #[test]
+    fn long_audio_cuts_in_the_gap() {
+        // "speech" everywhere except a silent gap at 800..860; limit is 1000
+        let x: Vec<f32> = (0..2500).map(|i| if (800..860).contains(&i) { 0.0 } else { 0.7 }).collect();
+        let parts = split_at_quiet(&x, 1000, 300, 40);
+        assert!((800..860).contains(&parts[0].end), "cut at {} missed the gap", parts[0].end);
+        assert!(parts.iter().all(|r| r.len() <= 1000));
+        assert_eq!(parts.first().unwrap().start, 0);
+        assert_eq!(parts.last().unwrap().end, x.len());
+        assert!(parts.windows(2).all(|w| w[0].end == w[1].start), "pieces must tile: {parts:?}");
+    }
+
+    #[test]
+    fn no_quiet_spot_still_terminates() {
+        let parts = split_at_quiet(&[1.0; 5000], 1000, 100, 1000); // window bigger than look
+        assert!(parts.iter().all(|r| !r.is_empty() && r.len() <= 1000));
+        assert_eq!(parts.iter().map(|r| r.len()).sum::<usize>(), 5000);
+    }
 
     #[test]
     fn downmix_averages_channels() {

@@ -57,7 +57,7 @@
 
 use anyhow::{anyhow, Result};
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
-use parakeet_rs::{ExecutionConfig, ParakeetTDT, ParakeetUnified, TimestampMode, Transcriber};
+use parakeet_rs::{CohereASR, ExecutionConfig, Nemotron, NemotronMode, ParakeetTDT, ParakeetUnified, TimestampMode, Transcriber};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
@@ -70,17 +70,43 @@ use crate::perf::{self, Clip, Transcript};
 use crate::state::{Mode, ModelStatus, State};
 use crate::ui;
 
-/// A loaded model, whichever engine it needs. Both speak parakeet-rs's
-/// Transcriber trait; Unified's impl is its OFFLINE path (full context, the
-/// low-WER mode), not the chunked streaming one.
+/// A loaded model, whichever engine it needs. TDT and Unified speak
+/// parakeet-rs's Transcriber trait (Unified's impl is its OFFLINE path: full
+/// context, the low-WER mode). Nemotron runs its streaming encoder over the
+/// whole clip in one go. Cohere is an encoder-decoder that must be told the
+/// language, so it carries the code it was loaded for.
 pub enum Model {
     Tdt(Box<ParakeetTDT>),
     Unified(Box<ParakeetUnified>),
+    Nemotron(Box<Nemotron>),
+    Cohere { m: Box<CohereASR>, lang: String },
 }
 
 impl Model {
     pub fn engine(&self) -> Engine {
-        match self { Self::Tdt(_) => Engine::Tdt, Self::Unified(_) => Engine::Unified }
+        match self {
+            Self::Tdt(_)        => Engine::Tdt,
+            Self::Unified(_)    => Engine::Unified,
+            Self::Nemotron(_)   => Engine::Nemotron,
+            Self::Cohere { .. } => Engine::Cohere,
+        }
+    }
+}
+
+/// Cohere wants a language and can't detect one. `auto` (or a code it doesn't
+/// know) means English: the one guess that's right for most people who
+/// didn't set it. Pure.
+pub fn cohere_lang(want: &str, supported: &[String]) -> String {
+    if supported.iter().any(|s| s == want) { want.to_owned() } else { "en".to_owned() }
+}
+
+/// Nemotron 3.5's prompt table keys some languages only by locale ("ja-JP",
+/// not "ja"). Map our plain ISO codes onto the keys it has. Pure.
+pub fn nemotron_lang(want: &str) -> &str {
+    match want {
+        "ja" => "ja-JP", "zh" => "zh-CN", "vi" => "vi-VN", "id" => "id-ID", "th" => "th-TH",
+        "he" => "he-IL", "fa" => "fa-IR", "ms" => "ms-MY", "bn" => "bn-IN", "ta" => "ta-IN",
+        other => other,
     }
 }
 
@@ -228,23 +254,52 @@ pub struct Loaded {
     pub note:   Option<String>,
 }
 
+/// Engine × device pairs that are known broken, found the hard way by racing
+/// every model on every device. Refused up front, with the reason, instead
+/// of a cryptic ORT error halfway through your first clip. Pure.
+pub fn unsupported(engine: Engine, device: Device) -> Option<&'static str> {
+    UNSUPPORTED.iter().find(|(e, d, _)| *e == engine && *d == device).map(|(_, _, why)| *why)
+}
+
+/// The table behind `unsupported`; the UI gets it too, to grey out buttons.
+pub const UNSUPPORTED: &[(Engine, Device, &str)] = &[
+    (Engine::Cohere, Device::DirectMl,
+        "Cohere Transcribe doesn't run on DirectML: ONNX Runtime's DirectML attention kernel rejects its decoder. Use CPU or CUDA"),
+];
+
 /// Load `dir` on `want`. `strict`: a GPU that won't come up is an error
 /// (benchmarks: never pass CPU numbers off as GPU numbers). Not strict: fall
 /// back to CPU and say why (dictation: typing beats purity).
-pub fn load_on(dir: &Path, threads: Option<usize>, want: Device, strict: bool) -> Result<Loaded> {
+pub fn load_on(dir: &Path, threads: Option<usize>, want: Device, strict: bool, lang: &str) -> Result<Loaded> {
     if !looks_like_model(dir) {
         return Err(anyhow!("no Parakeet model in {} — download one from the Models page", dir.display()));
     }
-    let (device, note) = match device_ok(want) {
+    let engine = models::engine_of(dir);
+    let fits = device_ok(want).and_then(|()| unsupported(engine, want).map_or(Ok(()), |why| Err(why.to_owned())));
+    let (device, note) = match fits {
         Ok(()) => (want, None),
         Err(why) if strict => return Err(anyhow!("{} unavailable: {why}", want.label())),
         Err(why) => (Device::Cpu, Some(format!("{} unavailable, running on CPU: {why}", want.label()))),
     };
     let exec = Some(exec_config(threads, device)?);
     let ctx = |e: parakeet_rs::Error| anyhow!("loading {} on {}: {}", dir.display(), device.label(), explain(device, &e.to_string()));
-    let model = match models::engine_of(dir) {
+    let model = match engine {
         Engine::Tdt     => Model::Tdt(Box::new(ParakeetTDT::from_pretrained(dir, exec).map_err(ctx)?)),
         Engine::Unified => Model::Unified(Box::new(ParakeetUnified::from_pretrained(dir, exec).map_err(ctx)?)),
+        Engine::Nemotron => {
+            let mut m = Nemotron::from_pretrained(dir, exec).map_err(ctx)?;
+            if m.mode() == NemotronMode::Multilingual && lang != "auto" {
+                // An unknown code isn't worth failing a load over: it just stays on auto.
+                if let Err(e) = m.set_target_lang(nemotron_lang(lang)) { warn!("nemotron: {e}; staying on auto-detect"); }
+            }
+            Model::Nemotron(Box::new(m))
+        }
+        Engine::Cohere => {
+            let m = CohereASR::from_pretrained(dir, exec).map_err(ctx)?;
+            let lang = cohere_lang(lang, &m.supported_languages());
+            info!("cohere: transcribing as {lang:?} (it can't auto-detect; set Core ▸ language)");
+            Model::Cohere { m: Box::new(m), lang }
+        }
     };
     Ok(Loaded { model, device, note })
 }
@@ -257,8 +312,19 @@ pub fn transcribe(model: &mut Model, clip: Vec<f32>) -> Result<String> {
             .map_err(Into::into)
     }
     match model {
-        Model::Tdt(m)     => go(m.as_mut(), clip),
-        Model::Unified(m) => go(m.as_mut(), clip),
+        Model::Tdt(m)      => go(m.as_mut(), clip),
+        Model::Unified(m)  => go(m.as_mut(), clip),
+        Model::Nemotron(m) => Ok(m.transcribe_audio(&clip)?.trim().to_owned()),
+        // Trained on ≤35 s clips: cut longer ones in the quiet bits, glue the
+        // text back. CJK joins without spaces, like Cohere's reference code.
+        Model::Cohere { m, lang } => {
+            let sep = if matches!(lang.as_str(), "ja" | "zh") { "" } else { " " };
+            let parts = crate::dsp::split_at_quiet(&clip, 35 * SR as usize, 5 * SR as usize, SR as usize / 10)
+                .into_iter()
+                .map(|r| m.transcribe_audio(&clip[r], lang, true, true).map(|t| t.trim().to_owned()))
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            Ok(parts.into_iter().filter(|t| !t.is_empty()).collect::<Vec<_>>().join(sep))
+        }
     }
 }
 
@@ -274,7 +340,7 @@ pub fn model_name(dir: &Path) -> String {
 /// Returns the folder it ACTUALLY loaded too: labels come from that, not from
 /// a config that may have moved on mid-clip.
 fn bring_up(state: &State, demoted: Option<String>) -> Option<(Model, Device, PathBuf)> {
-    let (dir, threads, want) = { let c = state.cfg.read(); (c.model_dir.clone(), c.threads(), c.device) };
+    let (dir, threads, want, lang) = { let c = state.cfg.read(); (c.model_dir.clone(), c.threads(), c.device, c.language.clone()) };
     let want = if demoted.is_some() { Device::Cpu } else { want };
     let shown = dir.display().to_string();
     let publish = |s: ModelStatus| { *state.model.write() = s; ui::push_state(); };
@@ -287,7 +353,7 @@ fn bring_up(state: &State, demoted: Option<String>) -> Option<(Model, Device, Pa
 
     publish(ModelStatus::Loading { dir: shown.clone() });
     let t0 = Instant::now();
-    match load_on(&dir, threads, want, false) {
+    match load_on(&dir, threads, want, false, &lang) {
         Ok(Loaded { model: mut m, device, note }) => {
             let note = demoted.or(note);
             let load_ms = t0.elapsed().as_millis() as u64;
@@ -459,6 +525,26 @@ mod tests {
     fn cpu_and_unknown_errors_pass_through() {
         assert_eq!(explain(Device::Cpu, "bad allocation"), "bad allocation"); // your RAM, not VRAM
         assert_eq!(explain(Device::Cuda, "the model is haunted"), "the model is haunted");
+    }
+
+    #[test]
+    fn known_bad_pairs_are_fenced() {
+        assert!(unsupported(Engine::Cohere, Device::DirectMl).is_some());
+        assert!(unsupported(Engine::Nemotron, Device::DirectMl).is_none()); // slow there, but honest
+        for e in [Engine::Tdt, Engine::Unified, Engine::Nemotron, Engine::Cohere] {
+            assert!(unsupported(e, Device::Cpu).is_none(), "CPU runs everything: {e:?}");
+        }
+        assert!(unsupported(Engine::Tdt, Device::DirectMl).is_none()); // the one that flies
+    }
+
+    #[test]
+    fn language_mapping() {
+        let cohere: Vec<String> = ["en", "pt", "ja"].map(String::from).to_vec();
+        assert_eq!(cohere_lang("pt", &cohere), "pt");
+        assert_eq!(cohere_lang("auto", &cohere), "en"); // can't detect: English it is
+        assert_eq!(cohere_lang("tlh", &cohere), "en");  // Klingon not in this release
+        assert_eq!(nemotron_lang("ja"), "ja-JP");
+        assert_eq!(nemotron_lang("de"), "de");
         let once = explain(Device::Cuda, "CUDA failure 35");
         assert_eq!(explain(Device::Cuda, &format!("cuda unavailable: {once}")), format!("cuda unavailable: {once}"));
     }

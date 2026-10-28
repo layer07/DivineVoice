@@ -117,6 +117,31 @@ const OUTPUT = [
   { id: 'type',        name: 'Type · HID',  how: 'Real scancodes through the Interception driver. Survives Parsec and hardware KVMs.', tags: ['local', 'parsec', 'kvm', 'us-ascii'], hid: true },
 ];
 
+/// Engine chip text + what it means, for the hover.
+const ENG = {
+  tdt:      ['TDT', 'token-and-duration transducer: skips silence, fast'],
+  unified:  ['RNNT', 'transducer, offline mode: full-clip context'],
+  nemotron: ['RNNT·S', 'cache-aware streaming transducer'],
+  cohere:   ['AED', 'attention encoder-decoder: big, careful, slower'],
+};
+const engChip = (e) => `<span class="chip" title="${esc((ENG[e] || [e, ''])[1])}">${esc((ENG[e] || [e])[0])}</span>`;
+
+/// The language picker. Plain ISO codes; Nemotron's locale keys are mapped in Rust.
+const LANGS = [['auto', 'Auto-detect'], ['en', 'English'], ['es', 'Spanish'], ['fr', 'French'], ['de', 'German'],
+  ['it', 'Italian'], ['pt', 'Portuguese'], ['nl', 'Dutch'], ['pl', 'Polish'], ['ru', 'Russian'], ['uk', 'Ukrainian'],
+  ['tr', 'Turkish'], ['el', 'Greek'], ['sv', 'Swedish'], ['da', 'Danish'], ['fi', 'Finnish'], ['no', 'Norwegian'],
+  ['cs', 'Czech'], ['ro', 'Romanian'], ['hu', 'Hungarian'], ['ar', 'Arabic'], ['hi', 'Hindi'], ['ja', 'Japanese'],
+  ['ko', 'Korean'], ['zh', 'Chinese'], ['vi', 'Vietnamese']];
+
+/// What the language setting does for the model you have loaded right now.
+const langHint = () => ({
+  tdt: 'Parakeet detects it per clip; this is ignored',
+  unified: 'English-only model; this is ignored',
+  nemotron: 'Auto works; pinning it is more accurate',
+  cohere: "Cohere can't detect: pick yours (auto = English)",
+}[activeEngine()] || '');
+const activeEngine = () => S.snap.models.find((x) => x.id === S.snap.active_model)?.engine;
+
 const MODE_TEXT = {
   idle: 'Standing by',
   recording: 'Recording',
@@ -170,6 +195,16 @@ const DEV_LONG = { cpu: 'CPU', cuda: 'CUDA · NVIDIA', directml: 'DirectML · an
 // configured one works rather than flash it as unavailable.
 const devices = () => S.snap.devices || [...new Set(['cpu', cfg().device])].map((device) => ({ device, ok: true }));
 const devOk = (d) => devices().find((x) => x.device === d)?.ok ?? d === 'cpu';
+/// Can the ACTIVE model run on device `d`? null = yes, else the reason (from
+/// Rust's known-bad table: e.g. Cohere/Nemotron on DirectML).
+const misfit = (d) => (S.snap.unsupported || []).find((u) => u.engine === activeEngine() && u.device === d)?.why || null;
+/// A device button: unavailable on this machine, or unsupported by this model, both greyed with the why.
+const devBtn = (d, on) => {
+  const why = !d.ok ? `unavailable: ${d.reason}` : misfit(d.device);
+  return `<button class="${on ? 'on' : ''}" ${why ? 'disabled' : `data-act="set" data-k="device" data-v="${d.device}"`}
+    title="${esc(why || DEV_LONG[d.device])}">${DEV[d.device]}</button>`;
+};
+
 /// The plain-English half of a GPU error; the raw ORT dump lives in the tooltip.
 const gist = (why) => String(why || '').split(' (')[0];
 
@@ -233,11 +268,52 @@ function viewGeneral() {
       </div>
       ${learn}
     </section>
+    ${engineCard()}
     <section class="card">
       <h2>Output</h2>
       <p class="desc">How the text gets from us to your cursor.</p>
       <div class="tiles">${tiles}</div>
     </section>`;
+}
+
+/// Core ▸ Engine: where it runs and what language it listens for. One click
+/// swaps CPU ⇄ GPU (the model reloads in the background; dictation keeps
+/// working on the old one until the new one is warm).
+function engineCard() {
+  const c = cfg(), m = S.snap.model;
+  const where = m.state === 'ready' ? `<b>${esc(DEV_LONG[m.device] || m.device)}</b> · ${m.load_ms} ms load` : esc(m.state);
+  const segs = devices().map((d) => devBtn(d, c.device === d.device)).join('');
+  const langs = LANGS.map(([k, n]) => `<option value="${k}" ${c.language === k ? 'selected' : ''}>${n}</option>`).join('');
+  return `<section class="card">
+    <div class="row" style="flex-wrap:nowrap">
+      <div style="flex:1;min-width:0">
+        <h2 style="margin:0">Engine</h2>
+        <p class="desc" style="margin:2px 0 0">${esc(activeModelName())} on ${where}</p>
+      </div>
+      <div class="seg" aria-label="device">${segs}</div>
+      <span title="${esc(langHint())}">${select('language', langs, 'width:150px')}</span>
+    </div>
+    ${when(m.state === 'ready' && m.note, engineNote)}
+  </section>`;
+}
+
+/// ⓘ panel: the model's papers, so "should I pick this one?" has an answer.
+function modelInfo(m) {
+  const f = m.facts;
+  const row = (k, v) => when(v, () => `<dt>${k}</dt><dd>${esc(v)}</dd>`);
+  return `<div class="model-info">
+    <dl class="facts">
+      ${row('made by', f.by)}${row('released', f.released)}
+      ${row('size', `${f.params} parameters · ${fmtBytes(m.size)} download`)}
+      ${row('architecture', f.arch)}${row('license', f.license)}${row('languages', f.languages)}
+      ${row('published', f.published)}${row('our race', f.ours)}
+    </dl>
+    <div class="verdict">
+      <div class="v-pick"><b>pick it if</b>${esc(f.pick)}</div>
+      <div class="v-skip"><b>skip it if</b>${esc(f.skip)}</div>
+    </div>
+    <div class="info-foot"><a class="link" data-act="url" data-url="${esc(f.card)}">model card ↗</a><span class="dim">ONNX export: ${esc(m.source)}</span></div>
+  </div>`;
 }
 
 function modelCard(m) {
@@ -261,13 +337,14 @@ function modelCard(m) {
     <div class="model-top">
       <div class="model-id">
         <div class="model-name">${esc(m.name)}<span class="chip">${I.globe}${esc(m.langs)}</span>
-          <span class="chip" title="${m.engine === 'unified' ? 'RNNT (parakeet-unified engine)' : 'TDT (token-and-duration transducer)'}">${m.engine === 'unified' ? 'RNNT' : 'TDT'}</span>
+          ${engChip(m.engine)}
           <span class="size">${fmtBytes(m.size)}${when(partial && !busy, ` · ${fmtBytes(m.on_disk)} here`)}</span></div>
         <div class="model-blurb" title="${esc(m.blurb)} — ONNX export: ${esc(m.source)}">${esc(m.blurb)}</div>
       </div>
       <div class="meters">${meter('accuracy', m.accuracy)}${meter('speed', m.speed)}</div>
-      <div class="model-acts">${actions}</div>
+      <div class="model-acts"><button class="btn ghost info-btn ${S.info === m.id ? 'on' : ''}" data-act="model_info" data-id="${m.id}" title="Who made it, license, published WER, when to pick it" aria-label="details">ⓘ</button>${actions}</div>
     </div>
+    ${when(S.info === m.id, () => modelInfo(m))}
     ${when(busy, () => `<div class="progress"><div class="track"><div class="fill" style="width:${pct}%"></div></div>
       <div class="nums"><span class="dl-pct">${pct.toFixed(1)}%</span><span class="dl-bytes">${fmtBytes(dl.done)} / ${fmtBytes(dl.total)}</span></div></div>`)}
     ${when(dl?.error, () => `<div class="err-line">✕ ${esc(dl.error)}</div>`)}
@@ -292,8 +369,8 @@ function viewModels() {
       </div></div>`)}
     ${when(installed.length, () => `<div class="section-label">downloaded</div>${installed.map(modelCard).join('')}`)}
     ${when(available.length, () => `<div class="section-label">available to download</div>${available.map(modelCard).join('')}`)}
-    <div class="section-label">bring your own · any Parakeet TDT or Unified ONNX folder</div>
-    <div class="row"><input type="text" id="custom-dir" placeholder="C:\\path\\to\\model  (encoder*.onnx + decoder_joint*.onnx + vocab.txt or tokenizer.model)" value="${esc(custom ? cfg().model_dir : '')}" style="flex:1">
+    <div class="section-label">bring your own · any Parakeet, Nemotron or Cohere ONNX folder</div>
+    <div class="row"><input type="text" id="custom-dir" placeholder="C:\\path\\to\\model  (ONNX export: encoder + decoder + vocab/tokenizer)" value="${esc(custom ? cfg().model_dir : '')}" style="flex:1">
       <button class="btn" data-act="model_dir">Use folder</button>
       <button class="btn ghost" data-act="open" data-what="models">${I.folder}Downloads</button></div>`;
 }
@@ -683,7 +760,7 @@ function raceBoard() {
     <div class="board">${order.map((x, i) => `
       <div class="b-row ${best && x.id === best.id && !r.running ? 'best' : ''} ${S.bench.view === x.id ? 'viewing' : ''}" ${x.score ? `data-act="bench_view" data-id="${esc(x.id)}"` : ''}>
         <span class="b-rank">${r.running ? '·' : x.score ? `#${i + 1}` : '–'}</span>
-        <span class="b-name">${esc(x.name)} <span class="chip">${x.engine === 'unified' ? 'RNNT' : 'TDT'}</span><span class="chip dev ${x.device === 'cpu' ? '' : 'gpu'}">${DEV[x.device] || x.device}</span></span>
+        <span class="b-name">${esc(x.name)} ${engChip(x.engine)}<span class="chip dev ${x.device === 'cpu' ? '' : 'gpu'}">${DEV[x.device] || x.device}</span></span>
         <span class="b-phase">${phase(x)}</span>
         <span class="b-num">${x.ms ? `${f1(x.ms)} ms` : ''}</span>
         <span class="b-num">${x.xrt ? `${f1(x.xrt)}×` : ''}</span>
@@ -819,13 +896,8 @@ function viewAdvanced() {
       </section>
       <section class="card">
         <h2>Engine</h2>
-        <div class="grid2">
-          <div class="field"><label class="label">device</label>
-            ${select('device', devices().map((d) => `<option value="${d.device}" ${c.device === d.device ? 'selected' : ''} ${d.ok ? '' : 'disabled'}>${DEV_LONG[d.device]}${d.ok ? '' : ' · n/a'}</option>`).join(''), 'width:100%')}
-            <div class="hint">race them on Benchmark</div></div>
-          ${num('intra_threads', c.intra_threads, 'threads', '0 = ORT guesses', 0, 64)}
-        </div>
-        ${engineNote()}
+        <p class="desc">CPU threads for ONNX Runtime ≈ your physical P-cores. Device and language live on <a class="link" data-act="page" data-page="general">Core</a>.</p>
+        ${num('intra_threads', c.intra_threads, 'threads', '0 = ORT guesses · change reloads the model', 0, 64)}
       </section>
       <section class="card">
         <h2>Interception ${S.snap.interception ? '<span class="pill ok">driver on</span>' : '<span class="pill off">driver off</span>'}</h2>
@@ -890,6 +962,8 @@ const renderChrome = () => {
   // Titlebar: where you are, what it's doing, how fast it's been doing it.
   document.body.classList.toggle('recording', mode === 'recording');
   $('#tb-crumb').textContent = `/ ${PAGES[S.page].name}`;
+  if (!document.getElementById('theme-panel')) paint(c.theme);
+  $('#tb-theme').innerHTML = `${swatch(theme(c.theme), 'big')}<svg viewBox="0 0 12 12" class="caret"><path d="M3 4.5l3 3 3-3"/></svg>`;
   $('#tb-status').innerHTML = `
     ${when(p50, () => `<span>p50 <b>${p50}</b> ms</span>`)}
     <span>asr <b>${s.model.state === 'ready' ? esc((DEV[s.model.device] || s.model.device).toLowerCase()) : esc(s.model.state)}</b></span>
@@ -1132,6 +1206,28 @@ const ACT = {
   model_download: (el) => ipc('model_download', { id: el.dataset.id }),
   model_cancel: () => ipc('model_cancel'),
   model_use: (el) => ipc('model_use', { id: el.dataset.id }),
+  theme_menu: () => {
+    if (document.getElementById('theme-panel')) { themeClose(); return; }
+    const p = document.createElement('div');
+    p.id = 'theme-panel'; p.className = 'theme-panel'; p.setAttribute('role', 'dialog');
+    p.innerHTML = themePanel();
+    const r = $('#tb-theme').getBoundingClientRect(); // hang it off the button, right-aligned
+    p.style.top = `${r.bottom + 6}px`;
+    p.style.right = `${Math.max(6, innerWidth - r.right)}px`;
+    document.body.append(p);
+    p.querySelector('.tp-tile.on')?.scrollIntoView({ block: 'center' });
+  },
+  theme_pick: (el) => {
+    const id = el.dataset.id;
+    paint(id);
+    pref.set('dv.theme', id);
+    S.snap.config.theme = id; // so the close below doesn't snap back before Rust confirms
+    themeClose();
+    ipc('set', { key: 'theme', value: id });
+  },
+  model_info: (el) => { S.info = S.info === el.dataset.id ? null : el.dataset.id; render(); },
+  // Right-click ▸ Benchmark: straight to the race, active model, current device.
+  bench_go: () => { ACT.page({ dataset: { page: 'bench' } }); ACT.race_clip(); },
   model_delete: (el) => armed(`del:${el.dataset.id}`, () => ipc('model_delete', { id: el.dataset.id })),
   model_dir: () => ipc('model_dir', { path: $('#custom-dir').value }),
   history_delete: (el) => ipc('history_delete', { id: Number(el.dataset.id) }),
@@ -1141,6 +1237,109 @@ const ACT = {
   open: (el) => ipc('open', { what: el.dataset.what }),
   url: (el) => ipc('url', { url: el.dataset.url }),
 };
+
+// ── themes ───────────────────────────────────────────────────────────────
+//
+// A theme is a bag of --io-* variables (themes.js) poured over :root as
+// inline styles; "default" pours nothing and theme.css shows through. Hover a
+// tile = preview on the whole app, live. Leave = back to what you had. Click
+// = keep it (config.toml, plus localStorage so the next launch paints the
+// right colours before Rust even says hello).
+
+const THEMES = window.DV_THEMES || [];
+const THEME_GROUPS = [['dark', 'dark'], ['light', 'light'], ['retro', 'phosphor'], ['extreme', 'extreme'], ['a11y', 'accessible']];
+const theme = (id) => THEMES.find((t) => t.id === id) || THEMES[0];
+const tri = (t) => ['--io-accent', '--io-surface-raised', '--io-text-primary'].map((k) => t?.vars[k] || 'transparent');
+let painted = null;
+const paint = (id) => {
+  if (painted === id) return;
+  const t = theme(id), root = document.documentElement;
+  [...root.style].filter((p) => p.startsWith('--io-')).forEach((p) => root.style.removeProperty(p));
+  if (t && t.id !== 'default') Object.entries(t.vars).forEach(([k, v]) => root.style.setProperty(k, v));
+  root.dataset.mode = t?.mode || 'dark';
+  painted = id;
+};
+paint(pref.get('dv.theme', 'default')); // before the first frame, not after hello
+
+const swatch = (t, cls = '') => `<span class="swatch ${cls}">${tri(t).map((c) => `<i style="background:${c}"></i>`).join('')}</span>`;
+
+function themePanel() {
+  const cur = cfg().theme;
+  return `<div class="tp-head"><span>theme</span><b id="tp-name">${esc(theme(cur).name)}</b><span class="spacer"></span><span class="dim" id="tp-desc">${esc(theme(cur).desc)}</span></div>
+    <div class="tp-body">${THEME_GROUPS.map(([mode, label]) => {
+      const ts = THEMES.filter((t) => t.mode === mode);
+      return when(ts.length, () => `<div class="tp-label">${label}</div><div class="tp-grid">${ts.map((t) =>
+        `<button class="tp-tile ${t.id === cur ? 'on' : ''}" data-act="theme_pick" data-id="${t.id}" title="${esc(t.desc)}">${swatch(t)}<span>${esc(t.name)}</span></button>`).join('')}</div>`);
+    }).join('')}</div>`;
+}
+
+const themeClose = () => {
+  const p = document.getElementById('theme-panel');
+  if (!p) return;
+  p.remove();
+  paint(cfg().theme); // a preview never outlives the panel
+};
+
+document.addEventListener('mouseover', (e) => {
+  const p = document.getElementById('theme-panel');
+  if (!p) return;
+  const tile = e.target.closest('.tp-tile');
+  const t = tile ? theme(tile.dataset.id) : theme(cfg().theme);
+  if (tile || !e.target.closest('#theme-panel')) {
+    paint(t.id);
+    $('#tp-name').textContent = t.name;
+    $('#tp-desc').textContent = t.desc;
+  }
+});
+
+// ── right-click menu ─────────────────────────────────────────────────────
+//
+// WebView2's own menu (Back / Refresh / Save as / Print) is a web page's
+// menu, and this isn't a web page. Ours does app things: swap the device,
+// swap the model, race it, grab the last transcript, get out of the way.
+// Text fields keep the native one: cut/copy/paste is what you want there.
+
+const ctxHtml = () => {
+  const s = S.snap, c = cfg(), last = s.history[0];
+  const item = (act, label, attrs = '', hint = '') =>
+    `<button class="ctx-item" data-act="${act}" ${attrs}><span>${label}</span>${when(hint, `<span class="ctx-hint">${hint}</span>`)}</button>`;
+  const devs = devices().map((d) => devBtn(d, c.device === d.device)).join('');
+  const models = s.models.filter((m) => m.installed).map((m) =>
+    item(m.id === s.active_model ? 'noop' : 'model_use', `<i class="ctx-dot ${m.id === s.active_model ? 'on' : ''}"></i>${esc(m.name)}`, `data-id="${m.id}"`, (ENG[m.engine] || [m.engine])[0]));
+  return `<div class="ctx-head"><span class="dot ${modelState().cls}"></span>${esc(MODE_TEXT[s.status.mode] || s.status.mode)}<span class="spacer"></span>v${esc(s.version)}</div>
+    <div class="ctx-label">run on</div><div class="seg ctx-seg">${devs}</div>
+    ${when(models.length > 1, () => `<div class="ctx-label">model</div>${models.join('')}`)}
+    <div class="ctx-sep"></div>
+    ${item('bench_go', `${I.bench}Benchmark this setup`)}
+    ${when(last, () => item('copy', `${I.copy}Copy last transcript`, `data-id="${last.id}"`))}
+    ${item('open', `${I.folder}Open logs`, 'data-what="logs"')}
+    <div class="ctx-sep"></div>
+    ${item('win_min', 'Minimise to tray', '', 'Esc')}
+    ${item('win_close', 'Close to tray', '', 'Alt+F4')}`;
+};
+
+const ctxClose = () => document.getElementById('ctx')?.remove();
+document.addEventListener('contextmenu', (e) => {
+  if (e.target.closest('input, textarea')) return;
+  e.preventDefault();
+  ctxClose();
+  const m = document.createElement('div');
+  m.id = 'ctx'; m.className = 'ctx'; m.setAttribute('role', 'menu');
+  m.innerHTML = ctxHtml();
+  document.body.append(m);
+  // Open where you clicked, flipped back inside the window near the edges.
+  const r = m.getBoundingClientRect();
+  m.style.left = `${Math.min(e.clientX, innerWidth - r.width - 6)}px`;
+  m.style.top = `${Math.min(e.clientY, innerHeight - r.height - 6)}px`;
+});
+// Any click closes it: inside, after the item's action runs (bubbling hits
+// the action handler first); outside, straight away.
+document.addEventListener('click', () => setTimeout(ctxClose), true);
+document.addEventListener('mousedown', (e) => {
+  if (!e.target.closest('#theme-panel, #tb-theme')) themeClose();
+}, true);
+window.addEventListener('blur', ctxClose);
+document.addEventListener('wheel', ctxClose, { passive: true });
 
 document.addEventListener('click', (e) => {
   const el = e.target.closest('[data-act]');
@@ -1180,6 +1379,7 @@ document.addEventListener('keydown', (e) => {
   // While rebinding, the keyboard belongs to the hook. Don't let Space click
   // buttons or Tab wander off.
   if (S.learning) { e.preventDefault(); return; }
+  if (e.key === 'Escape') { if (document.getElementById('theme-panel')) themeClose(); else if (document.getElementById('ctx')) ctxClose(); else if (!e.target.matches('input, textarea, select')) ACT.win_min(); return; }
   if (e.key === 'Enter' && e.target.id === 'custom-dir') ACT.model_dir();
   if (e.key === 'Enter' && e.target.matches('input[data-key]')) e.target.blur();
 });

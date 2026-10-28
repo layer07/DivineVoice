@@ -81,6 +81,9 @@ pub fn snapshot(state: &State, full: bool) -> Value {
         "interception": state.interception.load(Ordering::Acquire),
         "history":      state.history.list(),
         "clips":        crate::clips::list(),
+        "unsupported":  crate::asr::UNSUPPORTED.iter()
+                            .map(|(e, d, why)| json!({ "engine": e, "device": d, "why": why }))
+                            .collect::<Vec<_>>(),
         // null until the ASR thread has probed them; never probe on the UI thread
         "devices":      crate::asr::devices_known().map(|ds| ds.iter()
                             .map(|(d, r)| json!({ "device": d, "ok": r.is_ok(), "reason": r.as_ref().err() }))
@@ -257,7 +260,8 @@ fn set(state: &State, key: &str, value: Value) -> Result<()> {
         hotkey::set_binding(new.hotkey, new.hotkey_mode == HotkeyMode::Toggle);
         info!("hotkey → {} ({:?})", new.hotkey, new.hotkey_mode);
     }
-    let reload = new.model_dir != old.model_dir || new.intra_threads != old.intra_threads || new.device != old.device;
+    let reload = new.model_dir != old.model_dir || new.intra_threads != old.intra_threads
+        || new.device != old.device || new.language != old.language;
     if new.history_max < old.history_max { state.history.trim(new.history_max); }
     if new.perf_max < old.perf_max { state.perf.trim(new.perf_max); }
 
@@ -285,6 +289,7 @@ fn clamp(mut c: Config) -> Config {
     c.history_max     = c.history_max.clamp(1, 10_000);
     c.perf_max        = c.perf_max.clamp(8, 4_096);
     c.input_device    = c.input_device.filter(|s| !s.trim().is_empty());
+    c.language        = Some(c.language.trim().to_lowercase()).filter(|l| !l.is_empty()).unwrap_or_else(|| "auto".into());
     c.fbdirector      = c.fbdirector.filter(|s| !s.trim().is_empty());
     c.skip_hwids      = c.skip_hwids.into_iter().map(|s| s.trim().to_uppercase()).filter(|s| !s.is_empty()).collect();
     c

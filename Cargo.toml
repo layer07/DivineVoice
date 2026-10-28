@@ -26,7 +26,7 @@ gpu = ["parakeet-rs/cuda", "parakeet-rs/directml"]
 [dependencies]
 # ASR. parakeet-rs pulls ort (ONNX Runtime). CPU is the default device; see
 # README "CPU vs GPU" for why, and the Benchmark tab to check on your machine.
-parakeet-rs = "0.4"
+parakeet-rs = { version = "0.4", features = ["cohere"] }
 
 # Mic. WASAPI under the hood.
 cpal = "0.15"
