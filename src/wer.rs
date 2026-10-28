@@ -30,11 +30,13 @@
 // letter/digit/apostrophe is a word break. "Know-how" and "know how" are the
 // same two words; "Steel." and "steel" are the same word; "steal" is not.
 //
-// Two fairness rules, the same ones the Open ASR leaderboard applies:
+// Fairness rules, leaderboard-style. None of these is a mishearing:
 //   numbers   models write "3", scripts say "three": digits are spelled out
-//             on both sides before comparing ("600,000" → six hundred thousand)
-//   compounds "runbook" vs "run book" is a spacing opinion, not a mishearing:
-//             a split/joined pair that spells the same word is merged to ok
+//             on both sides before comparing ("600,000" → six hundred thousand,
+//             "X61" → x sixty one, "3am" → three am)
+//   acronyms  "C F S" (how a TTS script spells it) == "CFS" == "C.F.S."
+//   compounds "runbook" vs "run book" is a spacing opinion: a split/joined
+//             pair that spells the same word is merged to ok
 //
 // Each token keeps its original spelling for display, so the UI can show
 // "Huh?" in the diff while the judge compares "huh".
@@ -108,20 +110,71 @@ fn spell(n: u64) -> String {
         .join(" ")
 }
 
-fn tokens(s: &str) -> Vec<Tok> {
-    s.split(|c: char| c.is_whitespace() || matches!(c, '-' | '–' | '—' | '/'))
-        .flat_map(|piece| {
-            let n = norm(piece);
-            match n.parse::<u64>() {
-                // A number: one display token, then silent continuation words.
-                Ok(v) if n.len() <= 15 => spell(v).split(' ').enumerate()
-                    .map(|(i, w)| Tok { norm: w.into(), show: if i == 0 { piece.into() } else { String::new() } })
-                    .collect::<Vec<_>>(),
-                _ if n.is_empty() => vec![],
-                _ => vec![Tok { norm: n, show: piece.to_owned() }],
-            }
-        })
+/// "x61" → ["x", "61"], "3am" → ["3", "am"], "don't" → ["don't"]. Letters
+/// (and apostrophes) vs digits; the boundary is a word break.
+fn runs(n: &str) -> Vec<String> {
+    let digit = |c: char| c.is_ascii_digit();
+    n.chars().fold(Vec::<String>::new(), |mut v, c| {
+        match v.last_mut() {
+            Some(last) if last.chars().last().is_some_and(|p| digit(p) == digit(c)) => last.push(c),
+            _ => v.push(c.to_string()),
+        }
+        v
+    })
+}
+
+/// Parakeet's number formatter sometimes writes "600 ,000". Glue a space that
+/// sits between a digit and a ",ddd" group back out, so it's one number.
+fn glue_digit_groups(s: &str) -> String {
+    let c: Vec<char> = s.chars().collect();
+    let group = |i: usize| c.get(i) == Some(&',') && (1..=3).all(|k| c.get(i + k).is_some_and(char::is_ascii_digit))
+        && !c.get(i + 4).is_some_and(char::is_ascii_digit);
+    c.iter().enumerate()
+        .filter(|&(i, &ch)| !(ch == ' ' && i > 0 && c[i - 1].is_ascii_digit() && group(i + 1)))
+        .map(|(_, &ch)| ch)
         .collect()
+}
+
+fn tokens(s: &str) -> Vec<Tok> {
+    let s = glue_digit_groups(s);
+    let words = s.split(|c: char| c.is_whitespace() || matches!(c, '-' | '–' | '—' | '/'))
+        .flat_map(|piece| {
+            // One display token per piece; everything else it expands into
+            // (spelled-out digits, the "61" of "X61") rides along silently.
+            runs(&norm(piece)).into_iter()
+                .flat_map(|r| match r.parse::<u64>() {
+                    Ok(v) if r.len() <= 15 => spell(v).split(' ').map(str::to_owned).collect(),
+                    _ => vec![r],
+                })
+                .enumerate()
+                .map(|(i, w)| Tok { norm: w, show: if i == 0 { piece.to_owned() } else { String::new() } })
+                .collect::<Vec<_>>()
+        });
+    collapse_acronyms(words.collect())
+}
+
+/// "C F S" → one token "cfs", so it matches "CFS" and "C.F.S.". Only runs of
+/// 2+ single CAPITAL letters: "a pager" and a lone "I" are left alone.
+fn collapse_acronyms(toks: Vec<Tok>) -> Vec<Tok> {
+    let letter = |t: &Tok| t.norm.len() == 1 && t.show.trim_matches(|c: char| !c.is_alphanumeric())
+        .chars().next().is_some_and(|c| c.is_ascii_uppercase()) && t.show.chars().filter(|c| c.is_alphanumeric()).count() == 1;
+    let mut out: Vec<Tok> = Vec::with_capacity(toks.len());
+    let mut run: Vec<Tok> = Vec::new();
+    let flush = |run: &mut Vec<Tok>, out: &mut Vec<Tok>| match run.len() {
+        0 => {}
+        1 => out.append(run),
+        _ => {
+            let norm = run.iter().map(|t| t.norm.as_str()).collect();
+            let show = run.iter().map(|t| t.show.as_str()).collect::<Vec<_>>().join(" ");
+            out.push(Tok { norm, show });
+            run.clear();
+        }
+    };
+    for t in toks {
+        if letter(&t) { run.push(t); } else { flush(&mut run, &mut out); out.push(t); }
+    }
+    flush(&mut run, &mut out);
+    out
 }
 
 /// Leaderboard-style compound merge, as a pure pass over the ops:
@@ -248,6 +301,11 @@ mod tests {
         assert_eq!(align("six hundred thousand times", "600,000 times").errors, 0);
         // a WRONG number is still wrong
         assert!(align("at three in the morning", "at 4 in the morning").errors > 0);
+        // Parakeet's "600 ,000" formatting quirk (seen live on 02_leftmost_child)
+        assert_eq!(glue_digit_groups("one 600 ,000 times"), "one 600,000 times");
+        assert_eq!(align("six hundred thousand times a second", "600 ,000 times a second").errors, 0);
+        // …but a comma that isn't a digit group is left alone
+        assert_eq!(glue_digit_groups("in 1999 ,really"), "in 1999 ,really");
     }
 
     #[test]
@@ -266,6 +324,25 @@ mod tests {
                       "Check the graphina dashboard, add a run book entry at 3 in the morning");
         assert_eq!(s.errors, 1, "{:?}", s.ops);
         assert!(s.ops.contains(&Op::Sub { r: "Grafana".into(), h: "graphina".into() }));
+    }
+
+    #[test]
+    fn letters_and_digits_glued_together() {
+        assert_eq!(runs("x61"), vec!["x", "61"]);
+        assert_eq!(runs("don't"), vec!["don't"]);
+        assert_eq!(align("The X sixty-one hummed.", "The X61 hummed.").errors, 0);
+        assert_eq!(align("at three am", "at 3am").errors, 0);
+        assert!(align("The X sixty-one hummed.", "The X62 hummed.").errors > 0);
+    }
+
+    #[test]
+    fn spelled_out_acronyms() {
+        assert_eq!(align("The C F S picks", "The CFS picks").errors, 0);
+        assert_eq!(align("The C F S picks", "The C.F.S. picks").errors, 0);
+        assert_eq!(align("The CFS picks", "The C F S picks").errors, 0);
+        // lowercase singles are words, not acronyms
+        assert_eq!(align("a pager buzzes", "a pager buzzes").errors, 0);
+        assert!(align("The C F S picks", "The CBS picks").errors > 0);
     }
 
     #[test]

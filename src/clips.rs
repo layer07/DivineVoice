@@ -69,10 +69,12 @@ pub struct Clip {
 /// %APPDATA%\DivineVoice\bench — your own clips, no rebuild needed.
 pub fn user_dir() -> PathBuf { crate::config::home().join("bench") }
 
-/// "devops-hard" → "Devops Hard". Good enough for a tab label.
+/// "devops-hard" → "Devops Hard", "02_leftmost_child" → "Leftmost Child".
+/// A leading number is for sort order, not for the label.
 fn title(id: &str) -> String {
     id.split(['-', '_', ' '])
         .filter(|w| !w.is_empty())
+        .skip_while(|w| w.chars().all(|c| c.is_ascii_digit()))
         .map(|w| { let mut cs = w.chars(); cs.next().map_or_else(String::new, |f| f.to_uppercase().chain(cs).collect()) })
         .collect::<Vec<_>>()
         .join(" ")
@@ -198,6 +200,8 @@ mod tests {
         assert_eq!(title("classic"), "Classic");
         assert_eq!(title("devops-hard"), "Devops Hard");
         assert_eq!(title("ill_met_by_silicon"), "Ill Met By Silicon");
+        assert_eq!(title("02_leftmost_child"), "Leftmost Child");
+        assert_eq!(title("2049"), "");
     }
 
     /// Every baked clip must decode and be roughly as long as its script
