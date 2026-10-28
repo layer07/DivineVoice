@@ -80,6 +80,8 @@ const I = {
   about:    svg('<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7v.01"/>'),
   globe:    svg('<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/>'),
   copy:     svg('<rect x="8" y="8" width="13" height="13"/><path d="M16 8V3H3v13h5"/>'),
+  // a spec sheet, folded corner: the model's papers (ⓘ panel)
+  papers:   svg('<path d="M5 3h10l4 4v14H5z"/><path d="M15 3v4h4M9 11h6M9 15h6M9 7h2"/>'),
   trash:    svg('<path d="M4 7h16M10 11v6M14 11v6M6 7l1 14h10l1-14M9 7V3h6v4"/>'),
   dl:       svg('<path d="M12 3v13M6 10l6 6 6-6M4 21h16"/>'),
   folder:   svg('<path d="M3 6h7l2 2h9v12H3z"/>'),
@@ -342,7 +344,7 @@ function modelCard(m) {
         <div class="model-blurb" title="${esc(m.blurb)} — ONNX export: ${esc(m.source)}">${esc(m.blurb)}</div>
       </div>
       <div class="meters">${meter('accuracy', m.accuracy)}${meter('speed', m.speed)}</div>
-      <div class="model-acts"><button class="btn ghost info-btn ${S.info === m.id ? 'on' : ''}" data-act="model_info" data-id="${m.id}" title="Who made it, license, published WER, when to pick it" aria-label="details">ⓘ</button>${actions}</div>
+      <div class="model-acts"><button class="btn ghost info-btn ${S.info === m.id ? 'on' : ''}" data-act="model_info" data-id="${m.id}" title="Who made it, license, published WER, when to pick it" aria-label="details">${I.papers}</button>${actions}</div>
     </div>
     ${when(S.info === m.id, () => modelInfo(m))}
     ${when(busy, () => `<div class="progress"><div class="track"><div class="fill" style="width:${pct}%"></div></div>

@@ -461,7 +461,8 @@ kbd {
 .model-name .chip, .model-name .size { font-weight: 400; }
 .model-blurb { margin-top: 3px; color: var(--io-text-tertiary); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .model-acts { display: flex; align-items: center; gap: 6px; justify-content: flex-end; min-width: 170px; }
-.info-btn { padding: 4px 9px; font-size: 15px; line-height: 1; color: var(--io-text-tertiary); }
+.info-btn { padding: 6px 8px; color: var(--io-text-tertiary); }
+.info-btn svg { width: 16px; height: 16px; }
 .info-btn:hover, .info-btn.on { color: var(--io-accent); border-color: var(--io-accent-dim); }
 
 /* ⓘ: the model's papers */
