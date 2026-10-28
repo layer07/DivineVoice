@@ -23,7 +23,7 @@ you:   [holds Ctrl+Space] "deploy it to staging and page me if it catches fire" 
 ## Why it exists
 
 - **Fast.** On an i9-14900K, a 3 s clip is typed out about 100 ms after you let
-  go. 53 s of audio transcribes in 3.3 s (16× real-time) on 8 threads. The Perf
+  go. 53 s of audio transcribes in 1.6 s (34× real-time) on 8 threads. The Perf
   page measures your own numbers, live.
 - **Multilingual.** Parakeet v3 auto-detects 25 European languages. Speak
   English, switch to Portuguese, and it keeps up.
@@ -38,9 +38,10 @@ you:   [holds Ctrl+Space] "deploy it to staging and page me if it catches fire" 
 
 1. **Get the binary.** Build it (see below), or grab `divinevoice.exe` from Releases.
 2. **Run it.** On first run there's no model yet, so Settings opens on the
-   **Models** page. Click **Download** on *Parakeet v3 · int8* (~650 MB, one
-   time). The download resumes if your Wi-Fi drops, and the model is selected
-   automatically when it finishes.
+   **Models** page. Click **Download** on *Parakeet Ultra* (~2.5 GB, one time;
+   English only and short on disk? *Parakeet Unified · int8*, 660 MB). The
+   download resumes if your Wi-Fi drops, and the model is selected automatically
+   when it finishes. Headless box? `divinevoice fetch parakeet-ultra`.
 3. **Talk.** Focus any text box, hold **Ctrl+Space**, talk, let go.
 
 The tray icon is a status light: idle → **recording** → transcribing → typing.
@@ -65,17 +66,44 @@ next keypress, and a new model loads in the background.
 
 ### Models
 
-| Model | Size | Languages |
-|---|---|---|
-| Parakeet v3 · int8 *(default)* | 650 MB | 25 European |
-| Parakeet v3 | 2.5 GB | 25 European |
-| Parakeet v2 · int8 | 640 MB | English |
-| Parakeet v2 | 2.5 GB | English |
+| Model | Size | Languages | Engine | What it is |
+|---|---|---|---|---|
+| **Parakeet Ultra** *(default)* | 2.5 GB | 25 European | TDT | [Moondream's post-trained v3](https://huggingface.co/moondream/parakeet-ultra) |
+| Parakeet Unified · int8 | 660 MB | English | RNNT | [NVIDIA parakeet-unified-en-0.6b](https://huggingface.co/nvidia/parakeet-unified-en-0.6b) (2026), quantized |
+| Parakeet Unified | 2.5 GB | English | RNNT | Same, full precision |
+| Parakeet v3 | 2.5 GB | 25 European | TDT | Stock [NVIDIA v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3). The reference |
 
-All four run through the same engine. The int8 builds are quantized weights
-from [istupakov's ONNX exports](https://huggingface.co/istupakov). They're a
-quarter of the size and nearly as accurate. Any other Parakeet TDT ONNX folder
-works too: Models ▸ *bring your own*.
+Our own race: a 53 s English clip, 8 threads on an i9-14900K, warm p50.
+
+| | v3 | **Ultra** | Ultra int8 (cut) | Unified | Unified int8 |
+|---|---|---|---|---|---|
+| time | 1593 ms | **1567 ms** | 1379 ms | 1730 ms | 1474 ms |
+| word errors | 1 | **0** | 4 | 1 | 1 |
+
+The only int8 Ultra export we could find lost words to its quantization, so the
+catalogue ships Ultra in full precision. Unified's int8 build lost nothing.
+
+**Ultra** is v3 post-trained by Moondream. It has the same architecture,
+tokenizer and languages, and Moondream reports fewer errors everywhere: English
+6.26 → 5.80 % WER on the Open ASR leaderboard sets, the 25-language FLEURS set
+11.62 → 9.55 %, Portuguese 4.65 → 3.96 %. **Unified** is NVIDIA's newest English
+model: 5.91 % offline WER vs 6.04 for v2 and 6.34 for v3. It's an RNNT, so it
+runs on a second engine path. Both engines come from
+[parakeet-rs](https://github.com/altunenes/parakeet-rs), and DivineVoice picks
+the right one from the files in the folder.
+
+We don't host weights. Each model downloads from the ONNX export credited on
+its card (hover the blurb). Any other Parakeet TDT or Unified ONNX folder works
+too: Models ▸ *bring your own*.
+
+```
+divinevoice models                    # list the catalogue, sizes, what's installed
+divinevoice fetch parakeet-ultra      # download one without opening the UI
+```
+
+`fetch` and the Models page use the same downloader. Each file streams to a
+`.part` file, resumes with HTTP Range, and is checked against the exact size
+HuggingFace reports.
 
 ### Output modes
 
@@ -157,10 +185,12 @@ Measure your own machine:
 
 ```
 divinevoice bench some-speech.mp3 --thread-scan 1,2,4,6,8,12,16
+divinevoice bench some-speech.mp3 --model parakeet-unified --text   # any model, full transcript
 ```
 
 That prints load, cold and warm timings (p50/p95), real-time factor and scaling
-efficiency per thread count. Put the knee in `intra_threads`.
+efficiency per thread count. Put the knee in `intra_threads`. `--model` takes a
+catalogue id or a folder, so you can race models on your own voice.
 
 ## Build
 
@@ -205,8 +235,8 @@ and `app.css` uses only those tokens.
 | `binding.rs` | `"Ctrl+Shift+F13"` ⇄ (mods, VK). Parse, format, sanity checks. Pure |
 | `audio.rs` | Mic capture, generic over every cpal sample format |
 | `dsp.rs` | `downmix` and `resample` (boxcar decimator / linear interpolator). Pure |
-| `asr.rs` | Model load, warm-up, hot swap, inference |
-| `models.rs` | Catalogue + resumable HuggingFace downloader |
+| `asr.rs` | Model load (TDT or Unified engine), warm-up, hot swap, inference |
+| `models.rs` | Catalogue, engine detection, resumable HuggingFace downloader |
 | `perf.rs` | Per-clip stopwatch, 64-entry ring, pure p50/p95/xRT/wps/wpm stats |
 | `history.rs` | Opt-in transcript history |
 | `inject.rs` | The four output modes and the fallback ladder |

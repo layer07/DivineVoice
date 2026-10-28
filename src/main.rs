@@ -80,6 +80,17 @@ fn main() -> Result<()> {
     match args.first().map(String::as_str) {
         None => daemon(false),
         Some("--settings") => daemon(true),
+        Some("models") => {
+            win::attach_parent_console();
+            models::CATALOGUE.iter().for_each(|s| println!("{:24} {:>8.2} GB  {:9} {:13} {}",
+                s.id, s.size() as f64 / 1e9, format!("{:?}", s.engine), s.langs,
+                if s.installed() { "installed" } else { "-" }));
+            Ok(())
+        }
+        Some("fetch") => {
+            win::attach_parent_console();
+            fetch(args.get(1).map(String::as_str))
+        }
         Some("bench") => {
             win::attach_parent_console();
             let (cfg, _) = Config::load();
@@ -92,7 +103,11 @@ fn main() -> Result<()> {
         }
         Some(other) => {
             win::attach_parent_console();
-            bail!("unknown argument {other:?}. usage: divinevoice [--settings | --version | bench <audio> [--iters N] [--thread-scan 1,2,4,8]]")
+            bail!("unknown argument {other:?}\n\
+                   usage: divinevoice [--settings | --version]\n\
+                   \x20      divinevoice models                      list the catalogue\n\
+                   \x20      divinevoice fetch <id>                  download a model, headless\n\
+                   \x20      divinevoice bench <audio> [--model <dir|id>] [--iters N] [--thread-scan 1,2,4,8] [--text]")
         }
     }
 }
@@ -135,6 +150,31 @@ fn daemon(show_settings: bool) -> Result<()> {
     spawn("watchdog", &state, watchdog);
 
     ui::run(state, show_settings || first_run)
+}
+
+/// `divinevoice fetch <id>`: the Models page download, minus the page. For
+/// boxes you only reach over SSH, and for people who like progress bars in a
+/// terminal. Resumes like the UI does, same files, same folder.
+fn fetch(id: Option<&str>) -> Result<()> {
+    use std::io::Write;
+    let Some(spec) = id.and_then(models::find) else {
+        bail!("usage: divinevoice fetch <id>   (see `divinevoice models` for ids)");
+    };
+    if spec.installed() {
+        println!("{} already installed in {}", spec.id, spec.dir().display());
+        return Ok(());
+    }
+    println!("fetching {} ({:.2} GB) from {} → {}", spec.id, spec.size() as f64 / 1e9, spec.source, spec.dir().display());
+    let t0 = Instant::now();
+    let never = std::sync::atomic::AtomicBool::new(false);
+    models::download(spec, &never, |done, total| {
+        let mb_s = done as f64 / 1e6 / t0.elapsed().as_secs_f64().max(0.001);
+        print!("\r  {:5.1}%  {:>7.0} / {:.0} MB  {:5.1} MB/s ",
+            done as f64 * 100.0 / total.max(1) as f64, done as f64 / 1e6, total as f64 / 1e6, mb_s);
+        let _ = std::io::stdout().flush();
+    })?;
+    println!("\ndone in {:.0?}", t0.elapsed());
+    Ok(())
 }
 
 /// Fire-and-forget thread. If it returns Err, we log it; nobody restarts it.

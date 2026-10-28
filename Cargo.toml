@@ -18,7 +18,7 @@ path = "src/main.rs"
 [dependencies]
 # ASR. CPU execution provider only — see README "Why no GPU". parakeet-rs pulls
 # ort (ONNX Runtime) and links it statically; no DLL zoo next to the exe.
-parakeet-rs = "0.3"
+parakeet-rs = "0.4"
 
 # Mic. WASAPI under the hood.
 cpal = "0.15"

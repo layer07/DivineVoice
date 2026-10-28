@@ -245,8 +245,9 @@ function modelCard(m) {
     <div class="model-top">
       <div class="model-id">
         <div class="model-name">${esc(m.name)}<span class="chip">${I.globe}${esc(m.langs)}</span>
+          <span class="chip" title="${m.engine === 'unified' ? 'RNNT (parakeet-unified engine)' : 'TDT (token-and-duration transducer)'}">${m.engine === 'unified' ? 'RNNT' : 'TDT'}</span>
           <span class="size">${fmtBytes(m.size)}${when(partial && !busy, ` · ${fmtBytes(m.on_disk)} here`)}</span></div>
-        <div class="model-blurb" title="${esc(m.blurb)}">${esc(m.blurb)}</div>
+        <div class="model-blurb" title="${esc(m.blurb)} — ONNX export: ${esc(m.source)}">${esc(m.blurb)}</div>
       </div>
       <div class="meters">${meter('accuracy', m.accuracy)}${meter('speed', m.speed)}</div>
       <div class="model-acts">${actions}</div>
@@ -275,8 +276,8 @@ function viewModels() {
       </div></div>`)}
     ${when(installed.length, () => `<div class="section-label">downloaded</div>${installed.map(modelCard).join('')}`)}
     ${when(available.length, () => `<div class="section-label">available to download</div>${available.map(modelCard).join('')}`)}
-    <div class="section-label">bring your own · any Parakeet TDT ONNX folder</div>
-    <div class="row"><input type="text" id="custom-dir" placeholder="C:\\path\\to\\model  (vocab.txt + encoder*.onnx + decoder_joint*.onnx)" value="${esc(custom ? cfg().model_dir : '')}" style="flex:1">
+    <div class="section-label">bring your own · any Parakeet TDT or Unified ONNX folder</div>
+    <div class="row"><input type="text" id="custom-dir" placeholder="C:\\path\\to\\model  (encoder*.onnx + decoder_joint*.onnx + vocab.txt or tokenizer.model)" value="${esc(custom ? cfg().model_dir : '')}" style="flex:1">
       <button class="btn" data-act="model_dir">Use folder</button>
       <button class="btn ghost" data-act="open" data-what="models">${I.folder}Downloads</button></div>`;
 }

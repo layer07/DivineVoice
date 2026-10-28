@@ -212,12 +212,14 @@ fn default_model_dir() -> PathBuf {
         .unwrap_or_else(|| crate::models::CATALOGUE[0].dir())
 }
 
-/// A TDT model dir: vocab.txt + some encoder*.onnx + some decoder_joint*.onnx
-/// (fp32 or int8 — parakeet-rs picks whichever is there).
+/// A model dir: some encoder*.onnx + some decoder_joint*.onnx (fp32 or int8,
+/// parakeet-rs picks whichever is there) + a vocabulary: vocab.txt (TDT) or
+/// tokenizer.model (Unified).
 pub fn looks_like_model(dir: &Path) -> bool {
     let has = |prefix: &str| std::fs::read_dir(dir).into_iter().flatten().flatten()
         .any(|e| e.file_name().to_str().is_some_and(|n| n.starts_with(prefix) && n.ends_with(".onnx")));
-    dir.join("vocab.txt").is_file() && has("encoder") && has("decoder_joint")
+    let vocab = dir.join("vocab.txt").is_file() || dir.join("tokenizer.model").is_file();
+    vocab && has("encoder") && has("decoder_joint")
 }
 
 /// Half the logical CPUs (≈ physical cores with SMT), clamped to [1, 8].

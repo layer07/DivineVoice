@@ -48,7 +48,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
-use parakeet_rs::{ExecutionConfig, ParakeetTDT, TimestampMode, Transcriber};
+use parakeet_rs::{ExecutionConfig, ParakeetTDT, ParakeetUnified, TimestampMode, Transcriber};
 use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
@@ -56,25 +56,62 @@ use tracing::{debug, info, warn};
 
 use crate::audio::SR;
 use crate::config::looks_like_model;
+use crate::models::{self, Engine};
 use crate::perf::{self, Clip, Transcript};
 use crate::state::{Mode, ModelStatus, State};
-use crate::{models, ui};
+use crate::ui;
 
-pub fn load(dir: &Path, threads: Option<usize>) -> Result<ParakeetTDT> {
+/// A loaded model, whichever engine it needs. Both speak parakeet-rs's
+/// Transcriber trait; Unified's impl is its OFFLINE path (full context, the
+/// low-WER mode), not the chunked streaming one.
+pub enum Model {
+    Tdt(Box<ParakeetTDT>),
+    Unified(Box<ParakeetUnified>),
+}
+
+impl Model {
+    pub fn engine(&self) -> Engine {
+        match self { Self::Tdt(_) => Engine::Tdt, Self::Unified(_) => Engine::Unified }
+    }
+}
+
+/// One ONNX Runtime environment for the whole process. parakeet-rs 0.4 makes
+/// you bring your own (0.3 hid it); it's an Arc inside, so every model swap
+/// just clones the handle instead of spinning up a new runtime.
+fn ort_env() -> Result<parakeet_rs::ort::environment::Environment> {
+    static ENV: std::sync::OnceLock<parakeet_rs::ort::environment::Environment> = std::sync::OnceLock::new();
+    if let Some(e) = ENV.get() { return Ok(e.clone()); }
+    let built = parakeet_rs::ort::init().with_name("divinevoice").build()
+        .map_err(|e| anyhow!("ONNX Runtime init: {e}"))?;
+    Ok(ENV.get_or_init(|| built).clone())
+}
+
+pub fn load(dir: &Path, threads: Option<usize>) -> Result<Model> {
     if !looks_like_model(dir) {
         return Err(anyhow!("no Parakeet model in {} — download one from the Models page", dir.display()));
     }
-    // No execution provider set = plain CPU. The config only carries threads.
-    let exec = threads.map(|n| ExecutionConfig::new().with_intra_threads(n));
-    ParakeetTDT::from_pretrained(dir, exec).with_context(|| format!("loading {}", dir.display()))
+    // No execution provider set = plain CPU. The config carries the runtime
+    // environment and (optionally) the thread count.
+    let base = ExecutionConfig::new().with_environment(ort_env()?);
+    let exec = Some(match threads { Some(n) => base.with_intra_threads(n), None => base });
+    let ctx = || format!("loading {}", dir.display());
+    Ok(match models::engine_of(dir) {
+        Engine::Tdt     => Model::Tdt(Box::new(ParakeetTDT::from_pretrained(dir, exec).with_context(ctx)?)),
+        Engine::Unified => Model::Unified(Box::new(ParakeetUnified::from_pretrained(dir, exec).with_context(ctx)?)),
+    })
 }
 
 /// One clip in, trimmed text out. Empty string = it heard nothing worth typing.
-pub fn transcribe(model: &mut ParakeetTDT, clip: Vec<f32>) -> Result<String> {
-    model
-        .transcribe_samples(clip, SR, 1, Some(TimestampMode::Sentences))
-        .map(|r| r.text.trim().to_owned())
-        .map_err(Into::into)
+pub fn transcribe(model: &mut Model, clip: Vec<f32>) -> Result<String> {
+    fn go(t: &mut impl Transcriber, clip: Vec<f32>) -> Result<String> {
+        t.transcribe_samples(clip, SR, 1, Some(TimestampMode::Sentences))
+            .map(|r| r.text.trim().to_owned())
+            .map_err(Into::into)
+    }
+    match model {
+        Model::Tdt(m)     => go(m.as_mut(), clip),
+        Model::Unified(m) => go(m.as_mut(), clip),
+    }
 }
 
 /// Human name for whatever's in `dir`: catalogue name, or the folder name.
@@ -85,7 +122,7 @@ pub fn model_name(dir: &Path) -> String {
 }
 
 /// (Re)load whatever `model_dir` points at, warm it up, publish to the UI.
-fn bring_up(state: &State) -> Option<ParakeetTDT> {
+fn bring_up(state: &State) -> Option<Model> {
     let (dir, threads) = { let c = state.cfg.read(); (c.model_dir.clone(), c.threads()) };
     let shown = dir.display().to_string();
     let publish = |s: ModelStatus| { *state.model.write() = s; ui::push_state(); };
@@ -104,8 +141,8 @@ fn bring_up(state: &State) -> Option<ParakeetTDT> {
             let t1 = Instant::now();
             if let Err(e) = transcribe(&mut m, vec![0.0; SR as usize]) { warn!("warm-up inference failed: {e:#}"); }
             let warmup_ms = t1.elapsed().as_millis() as u64;
-            info!("parakeet up: load {load_ms} ms + warm-up {warmup_ms} ms from {shown} ({} threads)",
-                threads.map_or("ORT-default".into(), |n| n.to_string()));
+            info!("parakeet up ({:?}): load {load_ms} ms + warm-up {warmup_ms} ms from {shown} ({} threads)",
+                m.engine(), threads.map_or("ORT-default".into(), |n| n.to_string()));
             publish(ModelStatus::Ready { dir: shown, load_ms, warmup_ms });
             Some(m)
         }

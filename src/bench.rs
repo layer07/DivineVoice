@@ -49,15 +49,19 @@ use crate::audio::SR;
 use crate::config::Config;
 use crate::{asr, dsp};
 
-struct Opts { file: PathBuf, iters: usize, threads: Vec<Option<usize>> }
+struct Opts { file: PathBuf, model: PathBuf, iters: usize, threads: Vec<Option<usize>>, text: bool }
 
 struct Run { threads: Option<usize>, load_ms: u128, cold_ms: u128, warm_ms: Vec<u128> }
+
+const USAGE: &str = "usage: divinevoice bench <audio-file> [--model <dir|catalogue-id>] [--iters N] \
+                     [--thread-scan 1,2,4,8] [--text]";
 
 pub fn run(args: &[String], cfg: &Config) -> Result<()> {
     let o = parse(args, cfg)?;
 
     println!("\n{} bench (CPU)\n──────────────────────────", crate::config::APP);
-    println!("file   {}\nmodel  {}\niters  {} warm (+1 cold)\n", o.file.display(), cfg.model_dir.display(), o.iters);
+    println!("file   {}\nmodel  {} ({:?})\niters  {} warm (+1 cold)\n",
+        o.file.display(), o.model.display(), crate::models::engine_of(&o.model), o.iters);
 
     let t0 = Instant::now();
     let pcm = decode(&o.file)?;
@@ -67,7 +71,7 @@ pub fn run(args: &[String], cfg: &Config) -> Result<()> {
     let runs: Vec<Run> = o.threads.iter()
         .filter_map(|&t| {
             println!("═══ {} ═══", fmt_threads(t));
-            bench_one(t, &pcm, o.iters, &cfg.model_dir)
+            bench_one(t, &pcm, o.iters, &o.model, o.text)
                 .inspect(|r| print_run(r, secs))
                 .inspect_err(|e| println!("  ERROR: {e:#}\n"))
                 .ok()
@@ -80,8 +84,10 @@ pub fn run(args: &[String], cfg: &Config) -> Result<()> {
 
 fn parse(args: &[String], cfg: &Config) -> Result<Opts> {
     let mut file = None;
+    let mut model = cfg.model_dir.clone();
     let mut iters = 10;
     let mut threads = vec![cfg.threads()];
+    let mut text = false;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut val = |flag: &str| it.next().ok_or_else(|| anyhow!("{flag} needs a value"));
@@ -92,15 +98,19 @@ fn parse(args: &[String], cfg: &Config) -> Result<Opts> {
                 .map(|x| x.trim().parse().map(Some))
                 .collect::<Result<_, _>>()
                 .context("--thread-scan wants e.g. 1,2,4,8")?,
-            f if f.starts_with('-') => bail!("unknown flag {f}"),
+            // A catalogue id ("parakeet-ultra-int8") or any model folder.
+            "--model" | "-m" => model = val("--model").map(|v| crate::models::find(v)
+                .map_or_else(|| PathBuf::from(v), |s| s.dir()))?,
+            "--text" => text = true,
+            f if f.starts_with('-') => bail!("unknown flag {f}\n{USAGE}"),
             f if file.is_none() => file = Some(PathBuf::from(f)),
             f => bail!("one audio file at a time, got a second: {f}"),
         }
     }
-    let file = file.ok_or_else(|| anyhow!("usage: divinevoice bench <audio-file> [--iters N] [--thread-scan 1,2,4,8]"))?;
+    let file = file.ok_or_else(|| anyhow!(USAGE))?;
     if !file.is_file() { bail!("not a file: {}", file.display()); }
     if threads.is_empty() { bail!("--thread-scan needs at least one number"); }
-    Ok(Opts { file, iters: iters.max(1), threads })
+    Ok(Opts { file, model, iters: iters.max(1), threads, text })
 }
 
 // ── decode ───────────────────────────────────────────────────────────────────
@@ -163,13 +173,15 @@ fn ms_of<T>(f: impl FnOnce() -> T) -> (T, u128) {
     (r, t.elapsed().as_millis())
 }
 
-fn bench_one(threads: Option<usize>, pcm: &[f32], iters: usize, dir: &Path) -> Result<Run> {
+fn bench_one(threads: Option<usize>, pcm: &[f32], iters: usize, dir: &Path, full_text: bool) -> Result<Run> {
     let (model, load_ms) = ms_of(|| asr::load(dir, threads));
     let mut model = model?;
     println!("  load  {load_ms} ms");
 
     let (text, cold_ms) = ms_of(|| asr::transcribe(&mut model, pcm.to_vec()));
-    println!("  cold  {cold_ms} ms → {:?}", clip(&text?, 60));
+    let text = text?;
+    println!("  cold  {cold_ms} ms → {:?}", clip(&text, 60));
+    if full_text { println!("\n--- transcript ---\n{text}\n------------------\n"); }
 
     let warm_ms = (1..=iters)
         .map(|n| {

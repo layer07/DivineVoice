@@ -447,7 +447,7 @@ kbd {
 /* ── models ─────────────────────────────────────────────────────────── */
 
 .model {
-  position: relative; margin-bottom: 8px;
+  position: relative; margin-bottom: 6px;
   background: var(--io-surface-raised); border: 1px solid var(--io-border);
   transition: border-color .12s;
 }
@@ -455,7 +455,7 @@ kbd {
 .model.active { border-color: var(--io-accent); box-shadow: 0 0 0 1px var(--io-accent-subtle), 0 0 30px var(--io-accent-subtle); }
 .model.active::before, .model.active::after { border-color: var(--io-accent); }
 /* one row: identity · meters · actions */
-.model-top { display: grid; grid-template-columns: 1fr auto auto; gap: 22px; align-items: center; padding: 12px 16px; }
+.model-top { display: grid; grid-template-columns: 1fr auto auto; gap: 22px; align-items: center; padding: 8px 14px; }
 .model-id { min-width: 0; }
 .model-name { font-size: 15px; font-weight: 650; display: flex; align-items: center; gap: 10px; }
 .model-name .chip, .model-name .size { font-weight: 400; }

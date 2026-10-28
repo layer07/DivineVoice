@@ -138,7 +138,7 @@ fn dispatch(state: &Arc<State>, cmd: &str, m: &Value) -> Result<Vec<String>> {
         "model_dir" => {
             let dir = PathBuf::from(str_arg("path")?.trim().trim_matches('"'));
             if !config::looks_like_model(&dir) {
-                bail!("no Parakeet model in {} (need vocab.txt + encoder*.onnx + decoder_joint*.onnx)", dir.display());
+                bail!("no Parakeet model in {} (need encoder*.onnx + decoder_joint*.onnx + vocab.txt or tokenizer.model)", dir.display());
             }
             set(state, "model_dir", json!(dir))?;
             refreshed(vec![toast("ok", "custom model folder set")])
