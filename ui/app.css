@@ -640,7 +640,18 @@ table.runs { width: 100%; border-collapse: collapse; font: 12px var(--mono); }
 .b-bar i { display: block; height: 100%; background: var(--io-accent); box-shadow: 0 0 8px var(--io-accent); transition: width .25s; }
 .b-num { font: 12px var(--mono); text-align: right; color: var(--io-text-secondary); }
 .b-wer { color: var(--io-text-primary); font-weight: 600; }
-.b-err { color: var(--io-error); font: 11px var(--mono); cursor: help; }
+.b-err { color: var(--io-error); font: 11px var(--mono); cursor: help; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.b-vs { font: 600 11px var(--mono); letter-spacing: .04em; }
+.b-vs.up { color: var(--io-accent); }
+.b-vs.down { color: var(--io-text-tertiary); }
+.chip.dev { margin-left: 4px; }
+.chip.dev.gpu { border-color: var(--io-accent-dim); color: var(--io-accent-bright); }
+.seg.devs { padding: 2px; }
+.seg.devs button { padding: 5px 10px; }
+.seg.devs button[disabled] { opacity: .35; cursor: not-allowed; text-decoration: line-through; }
+.dev-note { margin-top: 8px; font: 11.5px var(--mono); color: var(--io-text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dev-note b { color: var(--io-text-secondary); margin-right: 4px; }
+.dev-note.warn { color: var(--io-warning); }
 
 /* ── about ──────────────────────────────────────────────────────────── */
 

@@ -7,7 +7,7 @@
 <p align="center"><b>Hold the shortcut. Talk. Let go. Text appears where your cursor is.</b></p>
 
 <p align="center">
-  Local push-to-talk dictation for Windows · NVIDIA Parakeet on your CPU ·
+  Local push-to-talk dictation for Windows · NVIDIA Parakeet on your CPU or GPU ·
   no cloud, no account, no telemetry, no Electron
 </p>
 
@@ -18,7 +18,7 @@ you:   [holds Ctrl+Space] "deploy it to staging and page me if it catches fire" 
 ```
 
 > **Cave edition:** Finger hold key. Mouth make words. Finger let go. Words appear.
-> No cloud see words. No GPU wake up. CPU already awake. CPU fast. Done.
+> No cloud see words. CPU already awake. GPU want fight? Race. Loser go home.
 
 ## Why it exists
 
@@ -58,9 +58,9 @@ tray, so the app keeps listening. **Quit lives in the tray menu, and only there.
 | **Models** | Download, switch and delete models. Accuracy/speed bars, resumable downloads with live progress, or point at your own ONNX folder |
 | **Audio** | Pin a mic by name · min/max clip length |
 | **Perf** | The last 64 clips, timed from hotkey release to text delivered. p50/p95 latency, × real-time, words/s, your speaking pace in wpm, cold-start tax. A per-run bar chart with a stage breakdown (resample / queue / ASR / deliver). Numbers only, never your words |
-| **Benchmark** | Pick a clip and hit **▶ Run benchmark**: the same recorded tape runs through every installed model, your active one first. Its verdict is revealed word by word in a terminal with a shimmer, with substitutions, misses and insertions marked, plus accuracy, WER, ASR time, × real-time and a letter grade. The rest race onto a leaderboard; click a row to see what that model heard. Optional play-along through the speakers, synth sound effects. Clips live in [`bench/`](bench/README.md) (baked in) or `%APPDATA%\DivineVoice\bench` (yours, no rebuild). Prefer your own voice? *Read it yourself* arms the hotkey against the clip's script |
+| **Benchmark** | Pick a clip, pick **one model or all installed**, pick **CPU, CUDA and/or DirectML**, hit **▶ Run**: the same recorded tape runs through every model × device, your active model first. Its verdict is revealed word by word in a terminal with a shimmer, with substitutions, misses and insertions marked, plus accuracy, WER, ASR time, × real-time and a letter grade. The rest race onto a leaderboard with a device chip and a *3.4× vs CPU* line on GPU rows; a GPU that can't come up gets a failed row saying why, never CPU numbers in a GPU costume. Click a row to see what that model heard. Optional play-along through the speakers, synth sound effects. Clips live in [`bench/`](bench/README.md) (baked in) or `%APPDATA%\DivineVoice\bench` (yours, no rebuild). Prefer your own voice? *Read it yourself* arms the hotkey against the clip's script |
 | **History** | Opt-in list of recent transcripts, with copy and delete |
-| **Advanced** | Typing delays · ONNX threads · Interception skip list · fbdirector bus · log level |
+| **Advanced** | **Device (CPU / CUDA / DirectML)** · ONNX threads · typing delays · Interception skip list · fbdirector bus · log level |
 
 Every change saves to `config.toml` and applies live. A new hotkey works on the
 next keypress, and a new model loads in the background.
@@ -100,7 +100,7 @@ too: Models ▸ *bring your own*.
 ```
 divinevoice models                    # list the catalogue, sizes, what's installed
 divinevoice fetch parakeet-ultra      # download one without opening the UI
-divinevoice race --clip classic       # race every installed model on a clip (JSON lines, pipe to jq)
+divinevoice race --clip 01_altermann --models all --devices cpu,directml   # model × device, JSON lines, pipe to jq
 ```
 
 `fetch` and the Models page use the same downloader. Each file streams to a
@@ -148,6 +148,7 @@ hotkey          = "Ctrl+Space"  # any chord: "Ctrl+Shift+F13", "RAlt", "Pause"�
 hotkey_mode     = "hold"        # hold (walkie-talkie) | toggle (tap on, tap off)
 model_dir       = 'C:\path\to\model'
 inject_mode     = "paste"       # paste | paste_plain | unicode | type
+device          = "cpu"         # cpu | directml (any DX12 GPU) | cuda (NVIDIA). A GPU that won't come up falls back to CPU, and says why
 # input_device  = "QuadCast"    # pin a mic by name substring; omit = Windows default
 min_ms          = 250           # shorter clips = accidental tap, discarded
 max_ms          = 120000        # hard cap per clip
@@ -169,14 +170,51 @@ Logs go to `%APPDATA%\DivineVoice\divinevoice.YYYY-MM-DD.log`, rotated daily
 and kept for 7 days. Transcripts are **not** logged unless you set
 `log_level = "debug"`. A plaintext file of everything you've ever said is a bad default.
 
-## Why no GPU
+## CPU or GPU
 
-We tried it: CUDA, TensorRT and DirectML, benchmarked properly. For
-**push-to-talk**, a fat desktop CPU wins. The job is one short clip, then a
-minute of nothing. The GPU spends that minute clocking down, so every press pays
-for a clock ramp, host↔device copies and a sync before any work happens. The CPU
-is already awake with the model in cache. A GPU is a freight train, and this job
-is a bicycle courier.
+**CPU is the default** because it always works, and a fat desktop CPU is already
+25-40× real-time. Push-to-talk is one short clip, then a minute of nothing; a
+GPU spends that minute clocking down and pays a ramp plus host↔device copies on
+every press. That's why the first version shipped CPU-only, and it was right
+for the CUDA build we had then.
+
+Then DirectML on an RTX 3080 did this to a 40 s clip (`race`, warm median):
+
+| | CPU (i9, 8 threads) | DirectML (RTX 3080) | |
+|---|---|---|---|
+| Parakeet v3 | 976 ms · 41× | **288 ms · 138×** | 3.4× faster |
+| Parakeet Ultra | ~1600 ms · 25× | 1096 ms · 36× | 1.5× faster |
+
+Same model, same words, same WER. Speed is the only thing that changes. So now
+you pick (Advanced ▸ Engine), and you **measure instead of guess**: Benchmark ▸
+choose models ▸ toggle CPU + DirectML ▸ Run.
+
+| Device | Works on | Needs |
+|---|---|---|
+| `cpu` | everything | nothing |
+| `directml` | any DirectX 12 GPU: NVIDIA, AMD, Intel | nothing: `DirectML.dll` ships with Windows 10 1903+ |
+| `cuda` | NVIDIA | driver **580+** (CUDA 13), **cuDNN 9**, and the `onnxruntime_providers_*.dll` files next to the exe |
+
+Honesty rules, enforced in code:
+
+- **GPUs are probed for real at startup.** ONNX Runtime's default is to quietly
+  run on the CPU when a GPU provider fails to load, and then you're
+  "benchmarking the GPU" on the CPU. DivineVoice builds a tiny session with
+  `error_on_failure` on each GPU. Unavailable devices are greyed out with the
+  reason in English: *NVIDIA driver too old for this CUDA build*, not
+  `CUDA failure 35: (null)`.
+- **Benchmarks load strict.** A GPU that can't come up is a failed row.
+- **Dictation loads forgiving.** If the GPU can't come up, it runs on CPU and
+  the status bar says why. If the GPU dies **mid-clip** (VRAM blowout), the
+  same clip is re-run on CPU, so your sentence survives.
+- **VRAM is shared fairly.** A GPU race *parks* the dictation model (unloads
+  it, status `parked`) so two 2.5 GB models don't fight over your card, then
+  reloads it when the race ends. That holds even if the race thread panics.
+
+The other half of the cold start: ONNX Runtime does its real setup on the
+*first inference*, not at load time. So DivineVoice runs one second of silence
+through the model right after loading it, and your first sentence of the day
+skips that cost. The Perf page's *cold tax* tile shows whether that worked.
 
 The other half of the cold start: ONNX Runtime does its real setup on the
 *first inference*, not at load time. So DivineVoice runs one second of silence
@@ -188,11 +226,13 @@ Measure your own machine:
 ```
 divinevoice bench some-speech.mp3 --thread-scan 1,2,4,6,8,12,16
 divinevoice bench some-speech.mp3 --model parakeet-unified --text   # any model, full transcript
+divinevoice bench --clip 02_leftmost_child --device directml         # same, on the GPU
 ```
 
 That prints load, cold and warm timings (p50/p95), real-time factor and scaling
 efficiency per thread count. Put the knee in `intra_threads`. `--model` takes a
-catalogue id or a folder, so you can race models on your own voice.
+catalogue id or a folder, so you can race models on your own voice. `--device`
+takes `cpu`, `cuda` or `directml`.
 
 ## Build
 
@@ -203,8 +243,13 @@ cargo build --release      # → target\release\divinevoice.exe
 cargo test                 # pure cores: hotkey, binding, dsp, keymap, perf, ipc…
 ```
 
-ONNX Runtime is linked statically by `ort` (via `parakeet-rs`), so no DLL zoo
-ships with the exe. The only optional one is `interception.dll`.
+ONNX Runtime is linked statically by `ort` (via `parakeet-rs`), so the exe
+runs alone on CPU and DirectML. CUDA is the exception: its provider lives in
+`onnxruntime_providers_cuda.dll` + `onnxruntime_providers_shared.dll`, which
+must sit next to the exe. In a dev build those land in `target\release` as
+**symlinks** into ort's download cache, so a release copies the real files.
+`cargo build --release --no-default-features` builds CPU-only (smaller, no GPU
+code at all). The other optional DLL is `interception.dll`.
 
 The settings UI is plain HTML/CSS/JS in `ui/`, baked into the exe with
 `include_bytes!` and served over a custom `dv://` scheme to WebView2, which
@@ -219,10 +264,10 @@ and `app.css` uses only those tokens.
 
 ```
  hotkey ──Cmd──► audio ──Clip──► asr ──Transcript──► inject ──► perf.json
- LL hook         cpal/WASAPI     Parakeet TDT         paste · unicode · HID
-                 downmix in cb   (CPU, ORT, warm-up,
-                 resample once    hot-swappable)
-                 on release
+ LL hook         cpal/WASAPI     Parakeet TDT/RNNT    paste · unicode · HID
+                 downmix in cb   (CPU or GPU, ORT,
+                 resample once    warm-up, hot-swap,
+                 on release       parks for GPU races)
 
  every Clip/Transcript carries a Stopwatch started at hotkey release
 
@@ -237,11 +282,11 @@ and `app.css` uses only those tokens.
 | `binding.rs` | `"Ctrl+Shift+F13"` ⇄ (mods, VK). Parse, format, sanity checks. Pure |
 | `audio.rs` | Mic capture, generic over every cpal sample format |
 | `dsp.rs` | `downmix` and `resample` (boxcar decimator / linear interpolator). Pure |
-| `asr.rs` | Model load (TDT or Unified engine), warm-up, hot swap, inference |
+| `asr.rs` | Model load (TDT or Unified engine) on CPU/CUDA/DirectML, honest GPU probe, warm-up, hot swap, parking, GPU→CPU rescue, inference |
 | `models.rs` | Catalogue, engine detection, resumable HuggingFace downloader |
 | `perf.rs` | Per-clip stopwatch, 64-entry ring, pure p50/p95/xRT/wps/wpm stats |
 | `wer.rs` | The judge: word-level Levenshtein → ok/sub/del/ins + WER. Pure |
-| `race.rs` | Replays one clip or take through every installed model, active first, one in RAM at a time |
+| `race.rs` | Replays one clip or take through the chosen models × devices, active first, one in RAM at a time |
 | `clips.rs` | Benchmark clips (baked from `bench/` by `build.rs`, or yours from `%APPDATA%`) + the audio decoder |
 | `history.rs` | Opt-in transcript history |
 | `inject.rs` | The four output modes and the fallback ladder |
@@ -265,6 +310,10 @@ House rules:
 - Windows only. It's Win32 all the way down: LL hooks, SendInput, WebView2, tray.
 - Hotkeys are keyboard only, no mouse side buttons yet. The LL keyboard hook can't see them.
 - Downloads are checked by exact byte size, not by hash.
+- GPU devices are probed once at startup. Updated your driver? Restart DivineVoice.
+- Big models on small cards: Ultra in fp32 wants ~3 GB of free VRAM on DirectML.
+  If your browser and game already ate it, you'll see *out of GPU memory*:
+  that's the card, not the model. Use v3 / Unified int8, or CPU.
 - Type mode is US-QWERTY ASCII. Anything else goes through Unicode or Paste.
 - Unicode/Paste can't type into elevated (admin) windows unless DivineVoice is
   elevated too. That's UIPI, Windows working as designed.

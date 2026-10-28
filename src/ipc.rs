@@ -46,7 +46,7 @@ use tracing::{info, warn};
 use crate::config::{Config, HotkeyMode};
 use crate::hotkey::{self, Learned};
 use crate::models::{self, CATALOGUE};
-use crate::state::{Download, State};
+use crate::state::{Download, ModelStatus, State};
 use crate::{audio, config, perf, ui};
 
 pub fn envelope<T: Serialize + ?Sized>(ev: &str, data: &T) -> String {
@@ -81,6 +81,10 @@ pub fn snapshot(state: &State, full: bool) -> Value {
         "interception": state.interception.load(Ordering::Acquire),
         "history":      state.history.list(),
         "clips":        crate::clips::list(),
+        // null until the ASR thread has probed them; never probe on the UI thread
+        "devices":      crate::asr::devices_known().map(|ds| ds.iter()
+                            .map(|(d, r)| json!({ "device": d, "ok": r.is_ok(), "reason": r.as_ref().err() }))
+                            .collect::<Vec<_>>()),
         "perf":         perf_view(state),
         "paths": {
             "config": Config::path(),
@@ -136,6 +140,8 @@ fn dispatch(state: &Arc<State>, cmd: &str, m: &Value) -> Result<Vec<String>> {
         }
         "bench_disarm" => { state.disarm_bench(); vec![] }
         // Race a benchmark clip ({clip: id}) or, without one, your last read-along take.
+        //   models:  "active" (default) | "all" | ["parakeet-ultra", ...]
+        //   devices: ["cpu", "directml", ...]  (default: the configured device)
         "race" => {
             let (take, reference) = match m["clip"].as_str() {
                 Some(id) => {
@@ -144,7 +150,13 @@ fn dispatch(state: &Arc<State>, cmd: &str, m: &Value) -> Result<Vec<String>> {
                 }
                 None => crate::race::last_take(state)?,
             };
-            crate::race::start(Arc::clone(state), take, reference)?;
+            let scope = match &m["models"] {
+                Value::String(s) if s == "all" => crate::race::Scope::All,
+                Value::Array(ids) => crate::race::Scope::Only(ids.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect()),
+                _ => crate::race::Scope::Active,
+            };
+            let devices: Vec<crate::config::Device> = serde_json::from_value(m["devices"].clone()).unwrap_or_default();
+            crate::race::start(Arc::clone(state), take, reference, scope, devices)?;
             vec![]
         }
         "race_cancel" => { state.race_cancel.store(true, Ordering::Release); vec![] }
@@ -156,6 +168,7 @@ fn dispatch(state: &Arc<State>, cmd: &str, m: &Value) -> Result<Vec<String>> {
             let spec = models::find(str_arg("id")?).ok_or_else(|| anyhow!("unknown model"))?;
             if !spec.installed() { bail!("{} isn't downloaded yet", spec.name); }
             set(state, "model_dir", json!(spec.dir()))?;
+            retry_if_down(state);
             refreshed(vec![toast("ok", format!("switching to {}…", spec.name))])
         }
         "model_dir" => {
@@ -164,6 +177,7 @@ fn dispatch(state: &Arc<State>, cmd: &str, m: &Value) -> Result<Vec<String>> {
                 bail!("no Parakeet model in {} (need encoder*.onnx + decoder_joint*.onnx + vocab.txt or tokenizer.model)", dir.display());
             }
             set(state, "model_dir", json!(dir))?;
+            retry_if_down(state);
             refreshed(vec![toast("ok", "custom model folder set")])
         }
         "model_download" => {
@@ -227,6 +241,11 @@ fn dispatch(state: &Arc<State>, cmd: &str, m: &Value) -> Result<Vec<String>> {
 /// Generic config write: JSON round-trip for type checking, clamp to sane
 /// ranges, apply side effects, persist.
 fn set(state: &State, key: &str, value: Value) -> Result<()> {
+    // Read-modify-write of the whole config. The UI thread and the download
+    // thread both call this; without the lock the slower one quietly undoes
+    // the faster one.
+    static SET: parking_lot::Mutex<()> = parking_lot::const_mutex(());
+    let _one_at_a_time = SET.lock();
     let old = state.cfg.read().clone();
     let mut v = serde_json::to_value(&old)?;
     if v.get(key).is_none() { bail!("no such setting {key:?}"); }
@@ -238,7 +257,7 @@ fn set(state: &State, key: &str, value: Value) -> Result<()> {
         hotkey::set_binding(new.hotkey, new.hotkey_mode == HotkeyMode::Toggle);
         info!("hotkey → {} ({:?})", new.hotkey, new.hotkey_mode);
     }
-    let reload = new.model_dir != old.model_dir || new.intra_threads != old.intra_threads;
+    let reload = new.model_dir != old.model_dir || new.intra_threads != old.intra_threads || new.device != old.device;
     if new.history_max < old.history_max { state.history.trim(new.history_max); }
     if new.perf_max < old.perf_max { state.perf.trim(new.perf_max); }
 
@@ -246,6 +265,15 @@ fn set(state: &State, key: &str, value: Value) -> Result<()> {
     *state.cfg.write() = new;
     if reload { state.reload_model(); }
     Ok(())
+}
+
+/// Picking the model that's already configured changes nothing, so `set`
+/// doesn't reload. If that model is Failed or Missing, picking it again means
+/// "try again": reload anyway. Ready/Loading/Parked are left alone.
+fn retry_if_down(state: &State) {
+    if matches!(&*state.model.read(), ModelStatus::Failed { .. } | ModelStatus::Missing { .. }) {
+        state.reload_model();
+    }
 }
 
 fn clamp(mut c: Config) -> Config {
@@ -285,9 +313,16 @@ fn start_download(state: &Arc<State>, id: &str) -> Result<()> {
             Ok(()) => {
                 info!("models: {} installed", spec.id);
                 *st.download.lock() = None;
-                // First model on a fresh install? Use it — nobody downloads
-                // 650 MB to admire it.
-                if !config::looks_like_model(&st.cfg.read().model_dir) {
+                // Config already points at this one (fresh install, default
+                // model): the path didn't change, so nothing would tell the
+                // ASR thread it exists now. Poke it, or it sits at "no model"
+                // until you restart.
+                let active = st.cfg.read().model_dir.clone();
+                if models::which(&active).is_some_and(|a| a.id == spec.id) {
+                    st.reload_model();
+                } else if !config::looks_like_model(&active) {
+                    // First model on a fresh install? Use it — nobody downloads
+                    // 650 MB to admire it.
                     let _ = set(&st, "model_dir", json!(spec.dir()));
                 }
                 ui::push("toast", &json!({ "kind": "ok", "msg": format!("{} ready", spec.name) }));

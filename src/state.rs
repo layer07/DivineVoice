@@ -81,8 +81,11 @@ impl Mode {
 #[serde(tag = "state", rename_all = "lowercase")]
 pub enum ModelStatus {
     Loading { dir: String },
-    Ready   { dir: String, load_ms: u64, warmup_ms: u64 },
+    /// `device` is where it ACTUALLY runs; `note` says why if that's not where you asked.
+    Ready   { dir: String, load_ms: u64, warmup_ms: u64, device: String, note: Option<String> },
     Missing { dir: String },
+    /// Unloaded on purpose: a GPU race on the Benchmark page borrowed the VRAM.
+    Parked  { dir: String },
     Failed  { dir: String, error: String },
 }
 
@@ -120,6 +123,10 @@ pub struct State {
     pub bench:         Mutex<Bench>,
     pub racing:        AtomicBool,
     pub race_cancel:   AtomicBool,
+    /// Race → ASR thread: "drop the model, I need the VRAM". ASR → race:
+    /// `parked` = "done, it's gone". See asr.rs, Parking.
+    pub park:          AtomicBool,
+    pub parked:        AtomicBool,
 }
 
 impl State {
@@ -140,6 +147,8 @@ impl State {
             bench:         Mutex::new(Bench::default()),
             racing:        AtomicBool::new(false),
             race_cancel:   AtomicBool::new(false),
+            park:          AtomicBool::new(false),
+            parked:        AtomicBool::new(false),
         }
     }
 

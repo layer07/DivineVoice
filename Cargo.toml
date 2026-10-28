@@ -15,9 +15,17 @@ categories  = ["accessibility", "multimedia::audio"]
 name = "divinevoice"
 path = "src/main.rs"
 
+[features]
+# GPU execution providers, picked at runtime in Settings: CUDA (NVIDIA; needs
+# CUDA 13 + cuDNN 9 + driver >= 580) and DirectML (any DX12 GPU: NVIDIA, AMD,
+# Intel; nothing to install). CPU stays the default device. Build a lean
+# CPU-only exe with `cargo build --release --no-default-features`.
+default = ["gpu"]
+gpu = ["parakeet-rs/cuda", "parakeet-rs/directml"]
+
 [dependencies]
-# ASR. CPU execution provider only — see README "Why no GPU". parakeet-rs pulls
-# ort (ONNX Runtime) and links it statically; no DLL zoo next to the exe.
+# ASR. parakeet-rs pulls ort (ONNX Runtime). CPU is the default device; see
+# README "CPU vs GPU" for why, and the Benchmark tab to check on your machine.
 parakeet-rs = "0.4"
 
 # Mic. WASAPI under the hood.

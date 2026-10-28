@@ -38,6 +38,27 @@ use crate::binding::Binding;
 
 pub const APP: &str = "DivineVoice";
 
+/// Where the model runs. CPU is the default on purpose (see README): a fat
+/// desktop CPU usually beats a GPU on short push-to-talk clips. The Benchmark
+/// tab races them so you don't have to take our word for it.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Device {
+    #[default]
+    Cpu,
+    /// NVIDIA only. ONNX Runtime's CUDA 13 build: driver >= 580 + cuDNN 9.
+    Cuda,
+    /// Any DX12 GPU (NVIDIA, AMD, Intel). Nothing to install.
+    DirectMl,
+}
+
+impl Device {
+    pub const ALL: [Device; 3] = [Device::Cpu, Device::Cuda, Device::DirectMl];
+    pub fn label(self) -> &'static str {
+        match self { Self::Cpu => "cpu", Self::Cuda => "cuda", Self::DirectMl => "directml" }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum HotkeyMode {
@@ -87,6 +108,10 @@ pub struct Config {
     pub model_dir: PathBuf,
 
     pub inject_mode: InjectMode,
+
+    /// cpu | cuda | directml. A GPU that won't come up falls back to CPU and
+    /// says why on the Models page; it never silently pretends.
+    pub device: Device,
 
     /// Mic pin: case-insensitive substring of the device name ("QuadCast").
     /// Unset = Windows default input. Resolved on every press.
@@ -138,6 +163,7 @@ impl Default for Config {
             hotkey_mode:     HotkeyMode::Hold,
             model_dir:       default_model_dir(),
             inject_mode:     InjectMode::Paste,
+            device:          Device::Cpu,
             input_device:    None,
             min_ms:          250,
             max_ms:          120_000,

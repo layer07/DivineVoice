@@ -114,7 +114,7 @@ fn main() -> Result<()> {
                    usage: divinevoice [--settings | --version]\n\
                    \x20      divinevoice models                      list the catalogue\n\
                    \x20      divinevoice fetch <id>                  download a model, headless\n\
-                   \x20      divinevoice race --clip <id>            race every model on a clip (JSON lines)\n\
+                   \x20      divinevoice race --clip <id> [--models all] [--devices cpu,directml]   race (JSON lines)\n\
                    \x20      divinevoice bench <audio> [--model <dir|id>] [--iters N] [--thread-scan 1,2,4,8] [--text]")
         }
     }
@@ -189,16 +189,24 @@ fn fetch(id: Option<&str>) -> Result<()> {
 /// the page's events as JSON lines (race_start, race_step, race_result,
 /// race_end), so `| jq` gets you a leaderboard on a box with no screen.
 fn headless_race(args: &[String]) -> Result<()> {
-    let id = match args {
-        [flag, id] if flag == "--clip" => id.as_str(),
-        _ => bail!("usage: divinevoice race --clip <id>   (clips: {})",
-            clips::list().into_iter().map(|c| c.id).collect::<Vec<_>>().join(", ")),
+    let usage = || anyhow::anyhow!(
+        "usage: divinevoice race --clip <id> [--models active|all|id,id] [--devices cpu,directml,cuda]\n  clips: {}",
+        clips::list().into_iter().map(|c| c.id).collect::<Vec<_>>().join(", "));
+    let flag = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
+    let id = flag("--clip").ok_or_else(usage)?;
+    let scope = match flag("--models").as_deref() {
+        None | Some("active") => race::Scope::Active,
+        Some("all") => race::Scope::All,
+        Some(list) => race::Scope::Only(list.split(',').map(|s| s.trim().to_owned()).collect()),
     };
+    let devices = flag("--devices").map(|list| list.split(',')
+        .map(|d| serde_json::from_value::<config::Device>(serde_json::json!(d.trim())).map_err(|_| anyhow::anyhow!("unknown device {d:?}")))
+        .collect::<Result<Vec<_>>>()).transpose()?.unwrap_or_default();
     let (cfg, _) = Config::load();
     let state = Arc::new(State::new(cfg));
-    let (pcm, clip) = clips::pcm(id)?;
+    let (pcm, clip) = clips::pcm(&id)?;
     ui::echo_to_stdout();
-    race::start(Arc::clone(&state), Arc::new(pcm), clip.script)?;
+    race::start(Arc::clone(&state), Arc::new(pcm), clip.script, scope, devices)?;
     while state.racing.load(std::sync::atomic::Ordering::Acquire) {
         std::thread::sleep(Duration::from_millis(50));
     }

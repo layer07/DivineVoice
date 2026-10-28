@@ -7,7 +7,8 @@
  * Description: The Truth Machine.
  *              Decode audio file. Load model. Run cold, run warm, run again.
  *              Print p50, p95, realtime factor. Thread scan find the knee of your
- *              CPU. This the tool that told the GPU to go home.
+ *              CPU. Then --device cuda|directml, same clip, and the GPU
+ *              gets judged by the same machine. No lying in either direction.
  *
  * Author: Magnus Leatti (layer07)
  * URL: https://kernelriot.com
@@ -29,7 +30,11 @@
 // real-time factor. With --thread-scan, do all that per thread count and print
 // a scaling table so you can find your CPU's knee instead of guessing.
 //
-// This is the tool that told us to stop bothering with the GPU.
+// This tool once told us to stop bothering with the GPU. That was CUDA with
+// a pile of pain. DirectML on a 3080 then went 8× faster than the CPU on
+// parakeet-v3, so now it asks YOUR card: --device cuda|directml. A GPU that
+// can't come up is a loud error with the reason, never CPU numbers wearing a
+// GPU label.
 
 use anyhow::{anyhow, bail, Context, Result};
 use std::io::Write;
@@ -37,7 +42,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use crate::audio::SR;
-use crate::config::Config;
+use crate::config::{Config, Device};
 use crate::wer::{self, Op};
 use crate::{asr, clips};
 
@@ -50,13 +55,15 @@ struct Opts {
     iters:     usize,
     threads:   Vec<Option<usize>>,
     text:      bool,
+    device:    Device,
 }
 
 struct Run { threads: Option<usize>, load_ms: u128, cold_ms: u128, warm_ms: Vec<u128> }
 
 const USAGE: &str = "usage: divinevoice bench <audio-file> [--reference script.txt]\n\
                      \x20      divinevoice bench --clip <id>      (a benchmark clip; graded against its script)\n\
-                     \x20  options: --model <dir|catalogue-id>  --iters N  --thread-scan 1,2,4,8  --text";
+                     \x20  options: --model <dir|catalogue-id>  --iters N  --thread-scan 1,2,4,8  --text\n\
+                     \x20           --device cpu|cuda|directml";
 
 pub fn run(args: &[String], cfg: &Config) -> Result<()> {
     let o = parse(args, cfg)?;
@@ -76,7 +83,7 @@ pub fn run(args: &[String], cfg: &Config) -> Result<()> {
     };
     let secs = pcm.len() as f64 / SR as f64;
 
-    println!("\n{} bench (CPU)\n──────────────────────────", crate::config::APP);
+    println!("\n{} bench ({})\n──────────────────────────", crate::config::APP, o.device.label());
     println!("audio  {label}\nmodel  {} ({:?})\niters  {} warm (+1 cold){}\n",
         o.model.display(), crate::models::engine_of(&o.model), o.iters,
         if script.is_some() { " · graded" } else { "" });
@@ -85,9 +92,9 @@ pub fn run(args: &[String], cfg: &Config) -> Result<()> {
     let runs: Vec<Run> = o.threads.iter()
         .filter_map(|&t| {
             println!("═══ {} ═══", fmt_threads(t));
-            bench_one(t, &pcm, o.iters, &o.model, o.text, script.as_deref())
+            bench_one(t, o.device, &pcm, o.iters, &o.model, o.text, script.as_deref())
                 .inspect(|r| print_run(r, secs))
-                .inspect_err(|e| println!("  ERROR: {e:#}\n"))
+                .inspect_err(|e| println!("  ERROR: {}\n", asr::explain(o.device, &format!("{e:#}"))))
                 .ok()
         })
         .collect();
@@ -104,6 +111,7 @@ fn parse(args: &[String], cfg: &Config) -> Result<Opts> {
     let mut iters = 10;
     let mut threads = vec![cfg.threads()];
     let mut text = false;
+    let mut device = cfg.device;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut val = |flag: &str| it.next().ok_or_else(|| anyhow!("{flag} needs a value"));
@@ -120,6 +128,9 @@ fn parse(args: &[String], cfg: &Config) -> Result<Opts> {
             "--clip"         => clip = Some(val("--clip")?.clone()),
             "--reference" | "-r" => reference = Some(PathBuf::from(val("--reference")?)),
             "--text" => text = true,
+            "--device" | "-d" => device = val("--device").and_then(|v| Device::ALL.into_iter()
+                .find(|d| d.label() == v.to_ascii_lowercase())
+                .ok_or_else(|| anyhow!("--device wants cpu, cuda or directml, got {v:?}")))?,
             f if f.starts_with('-') => bail!("unknown flag {f}\n{USAGE}"),
             f if file.is_none() => file = Some(PathBuf::from(f)),
             f => bail!("one audio file at a time, got a second: {f}"),
@@ -138,7 +149,7 @@ fn parse(args: &[String], cfg: &Config) -> Result<Opts> {
         }
     };
     if threads.is_empty() { bail!("--thread-scan needs at least one number"); }
-    Ok(Opts { input, reference, model, iters: iters.max(1), threads, text })
+    Ok(Opts { input, reference, model, iters: iters.max(1), threads, text, device })
 }
 
 /// "  wer   2.1%  (2/97)  steel→steal · −who · +the"
@@ -163,10 +174,10 @@ fn ms_of<T>(f: impl FnOnce() -> T) -> (T, u128) {
 }
 
 fn bench_one(
-    threads: Option<usize>, pcm: &[f32], iters: usize, dir: &Path, full_text: bool, script: Option<&str>,
+    threads: Option<usize>, device: Device, pcm: &[f32], iters: usize, dir: &Path, full_text: bool, script: Option<&str>,
 ) -> Result<Run> {
-    let (model, load_ms) = ms_of(|| asr::load(dir, threads));
-    let mut model = model?;
+    let (model, load_ms) = ms_of(|| asr::load_on(dir, threads, device, true));
+    let mut model = model?.model;
     println!("  load  {load_ms} ms");
 
     let (text, cold_ms) = ms_of(|| asr::transcribe(&mut model, pcm.to_vec()));

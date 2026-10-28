@@ -162,12 +162,24 @@ const activeModelName = () => {
   return `Custom · ${dir.split(/[\\/]/).filter(Boolean).pop() || dir}`;
 };
 
+// Where Parakeet runs. Rust probes each once at startup (a real session with
+// error_on_failure, see asr.rs) and ships {device, ok, reason}.
+const DEV = { cpu: 'CPU', cuda: 'CUDA', directml: 'DirectML' };
+const DEV_LONG = { cpu: 'CPU', cuda: 'CUDA · NVIDIA', directml: 'DirectML · any GPU' };
+// null = Rust is still probing (a second or two at startup): assume the
+// configured one works rather than flash it as unavailable.
+const devices = () => S.snap.devices || [...new Set(['cpu', cfg().device])].map((device) => ({ device, ok: true }));
+const devOk = (d) => devices().find((x) => x.device === d)?.ok ?? d === 'cpu';
+/// The plain-English half of a GPU error; the raw ORT dump lives in the tooltip.
+const gist = (why) => String(why || '').split(' (')[0];
+
 const modelState = () => {
   const m = S.snap.model;
   return {
     loading: { cls: 'warn', text: 'loading…' },
-    ready:   { cls: 'ok',   text: `ready · ${m.load_ms} ms load` },
+    ready:   { cls: m.note ? 'warn' : 'ok', text: `${DEV[m.device] || m.device} · ${m.load_ms} ms load` },
     missing: { cls: 'err',  text: 'no model — download one' },
+    parked:  { cls: 'warn', text: 'parked · GPU race borrowed the VRAM' },
     failed:  { cls: 'err',  text: 'failed to load' },
   }[m.state] || { cls: '', text: m.state };
 };
@@ -268,7 +280,7 @@ function viewModels() {
   const available = s.models.filter((m) => !m.installed);
   const custom = !s.active_model;
   const ms = modelState();
-  return `${head('Models', 'All local, all CPU. Nothing you say leaves this machine.')}
+  return `${head('Models', 'All local, CPU or GPU. Nothing you say leaves this machine.')}
     <div class="status-line"><span class="dot ${ms.cls}"></span>${esc(activeModelName())} — ${esc(ms.text)}</div>
     ${when(s.model.error, () => `<div class="err-line" style="padding:8px 0 0">${esc(s.model.error)}</div>`)}
     ${when(custom, () => `<div class="section-label">active · custom folder</div>
@@ -494,6 +506,8 @@ S.bench = {
   recStart: null, raf: null,
   race: null,          // { running, audio_ms, lineup:[...], rows:{id:{...}}, first }
   audio: null,         // play-along <audio>
+  models: pref.get('dv.bmodels', 'active'),  // 'active' | 'all' | a catalogue id
+  devs: pref.get('dv.bdevs', null),          // devices to race on; null = whatever dictation uses
 };
 S.sfx = pref.get('dv.sfx', true);
 S.play = pref.get('dv.play', false);
@@ -533,6 +547,40 @@ const pct = (x) => `${(x * 100).toFixed(x < 0.1 ? 1 : 0)}`;
 const clips = () => S.snap.clips || [];
 const clip = () => clips().find((c) => c.id === S.bench.clip) || clips()[0] || null;
 
+/// What a race covers: one model or all of them, on one device or several.
+/// Stale picks (model deleted, GPU gone) quietly fall back instead of erroring.
+const installed = () => S.snap.models.filter((m) => m.installed);
+const benchModels = () => {
+  const m = S.bench.models;
+  return m === 'all' || installed().some((x) => x.id === m && x.id !== S.snap.active_model) ? m : 'active';
+};
+const benchDevs = () => {
+  const d = (S.bench.devs || [cfg().device]).filter(devOk);
+  return d.length ? d : ['cpu'];
+};
+const raceScope = () => {
+  const m = benchModels();
+  return { models: m === 'all' ? 'all' : m === 'active' ? undefined : [m], devices: benchDevs() };
+};
+/// "4 models × 2 devices", from what's actually on the board.
+const lineupSummary = (lineup) => {
+  const n = (k) => new Set(lineup.map((x) => x[k])).size;
+  const m = n('model'), d = n('device');
+  return `${m} model${m === 1 ? '' : 's'}${d > 1 ? ` × ${d} devices` : ` on ${DEV[lineup[0]?.device] || '?'}`}`;
+};
+
+function benchSetup() {
+  const sel = benchModels(), others = installed().filter((x) => x.id !== S.snap.active_model);
+  const opts = [`<option value="active" ${sel === 'active' ? 'selected' : ''}>${esc(activeModelName())} · active</option>`,
+    ...others.map((x) => `<option value="${esc(x.id)}" ${sel === x.id ? 'selected' : ''}>${esc(x.name)}</option>`),
+    ...(others.length ? [`<option value="all" ${sel === 'all' ? 'selected' : ''}>All installed (${others.length + 1})</option>`] : [])];
+  const on = benchDevs();
+  const chips = devices().map((d) => `<button class="${on.includes(d.device) ? 'on' : ''}" ${d.ok ? `data-act="bench_dev" data-dev="${d.device}"` : 'disabled'}
+      title="${esc(d.ok ? `race on ${DEV_LONG[d.device]}` : `${DEV_LONG[d.device]} unavailable: ${d.reason}`)}">${DEV[d.device]}</button>`).join('');
+  return `<span class="select"><select data-bmodels aria-label="models to race">${opts.join('')}</select></span>
+    <span class="seg devs" aria-label="devices to race on">${chips}</span>`;
+}
+
 /// The result on screen, normalised: a read-along take or a race row.
 function result() {
   const b = S.bench;
@@ -544,8 +592,8 @@ function result() {
   const r = b.race?.rows[b.view];
   if (!r?.score) return null;
   const audio = b.race.audio_ms, words = clip()?.words || r.score.ref_words;
-  return { score: r.score, ms: r.ms, audio_ms: audio, model: r.name,
-    sub: `load ${f1(r.load_ms)} ms`, pace: words / (audio / 60000), paceLabel: 'voice pace' };
+  return { score: r.score, ms: r.ms, audio_ms: audio, model: r.name, device: r.device,
+    sub: `${DEV[r.device] || r.device} · load ${f1(r.load_ms)} ms`, pace: words / (audio / 60000), paceLabel: 'voice pace' };
 }
 
 const opSpan = (o, i) => {
@@ -570,7 +618,7 @@ function termBody() {
 
 function termTitle() {
   const r = result(), c = clip();
-  if (r) return `~/divinevoice $ judge --model "${esc(r.model)}"`;
+  if (r) return `~/divinevoice $ judge --model "${esc(r.model)}"${r.device ? ` --device ${esc(r.device)}` : ''}`;
   return c ? `~/divinevoice $ bench --clip ${esc(c.id)}` : '~/divinevoice $ ls bench/';
 }
 
@@ -581,7 +629,7 @@ function benchStatus() {
   if (race?.running) {
     const done = Object.values(race.rows).filter((x) => x.score || x.error).length;
     return `<span class="rec-dot"></span><b class="mono">RACING ${done}/${race.lineup.length}</b>
-      <span class="dim">same tape, every model${S.play ? ' · playing along' : ''}</span><span class="spacer"></span>
+      <span class="dim">same tape · ${lineupSummary(race.lineup)}${S.play ? ' · playing along' : ''}</span><span class="spacer"></span>
       <button class="btn ghost" data-act="race_cancel">Stop</button>`;
   }
   if (b.armed) {
@@ -590,13 +638,14 @@ function benchStatus() {
       transcribing: `<span class="dot warn"></span><b class="mono">JUDGING…</b><span class="dim">Parakeet is listening back</span>`,
     }[mode] || `<span class="dot rec"></span><b class="mono">ARMED</b><span class="dim">${cfg().hotkey_mode === 'toggle' ? 'Tap' : 'Hold'} ${hk} and read. Dictation comes here, not to your cursor.</span>`;
     return `${live}<span class="spacer"></span>
-      ${when(b.take?.score, `<button class="btn" data-act="race">${I.models}Race my take</button>`)}
+      ${when(b.take?.score, () => `${benchSetup()}<button class="btn" data-act="race">${I.models}Race my take</button>`)}
       <button class="btn ghost" data-act="bench_disarm">Done reading</button>`;
   }
-  return `<button class="btn primary" data-act="race_clip">▶ ${race ? 'Run again' : 'Run benchmark'}</button>
-    <label class="switch" title="hear the clip while the models chew on it"><input type="checkbox" data-act="play" ${S.play ? 'checked' : ''}><i></i><span class="dim">play along</span></label>
+  return `${benchSetup()}
+    <button class="btn primary" data-act="race_clip">▶ ${race ? 'Run again' : 'Run'}</button>
     <span class="spacer"></span>
-    <a class="link mono" data-act="bench_arm" style="font-size:12px">or read it yourself →</a>`;
+    <label class="switch" title="hear the clip while the models chew on it"><input type="checkbox" data-act="play" ${S.play ? 'checked' : ''}><i></i><span class="dim">play along</span></label>
+    <a class="link mono" data-act="bench_arm" style="font-size:12px" title="arm the hotkey and read the script yourself">or read it →</a>`;
 }
 
 function benchScores() {
@@ -621,15 +670,20 @@ function raceBoard() {
   const best = rows.filter((x) => x.score).sort((a, b) => a.score.wer - b.score.wer || a.ms - b.ms)[0];
   const order = r.running ? rows : rows.slice().sort((a, b) =>
     (a.score ? 0 : 1) - (b.score ? 0 : 1) || (a.score?.wer ?? 9) - (b.score?.wer ?? 9) || (a.ms ?? 9e9) - (b.ms ?? 9e9));
-  const phase = (x) => x.error ? `<span class="b-err" title="${esc(x.error)}">failed</span>`
-    : x.score ? '<span class="dim">done</span>'
+  // Same model on the CPU, if it raced too: the number people actually want.
+  const vsCpu = (x) => {
+    const cpu = x.device !== 'cpu' && rows.find((y) => y.model === x.model && y.device === 'cpu' && y.ms);
+    return cpu ? `<span class="b-vs ${cpu.ms > x.ms ? 'up' : 'down'}">${f1(cpu.ms / x.ms)}× vs CPU</span>` : '<span class="dim">done</span>';
+  };
+  const phase = (x) => x.error ? `<span class="b-err" title="${esc(x.error)}">✕ ${esc(gist(x.error))}</span>`
+    : x.score ? vsCpu(x)
     : x.phase ? `<span class="b-bar"><i style="width:${{ load: 15, warm: 30 }[x.phase] ?? (30 + 70 * (x.run - 1) / x.of)}%"></i></span><span class="mono dim">${x.phase === 'run' ? `run ${x.run}/${x.of}` : x.phase}</span>`
     : '<span class="dim">queued</span>';
-  return `<div class="section-label">race · same tape, every model ${when(!r.running && best, '· click a row to see what it heard')}</div>
+  return `<div class="section-label">race · same tape · ${lineupSummary(r.lineup)} ${when(!r.running && best, '· click a row to see what it heard')}</div>
     <div class="board">${order.map((x, i) => `
       <div class="b-row ${best && x.id === best.id && !r.running ? 'best' : ''} ${S.bench.view === x.id ? 'viewing' : ''}" ${x.score ? `data-act="bench_view" data-id="${esc(x.id)}"` : ''}>
         <span class="b-rank">${r.running ? '·' : x.score ? `#${i + 1}` : '–'}</span>
-        <span class="b-name">${esc(x.name)} <span class="chip">${x.engine === 'unified' ? 'RNNT' : 'TDT'}</span></span>
+        <span class="b-name">${esc(x.name)} <span class="chip">${x.engine === 'unified' ? 'RNNT' : 'TDT'}</span><span class="chip dev ${x.device === 'cpu' ? '' : 'gpu'}">${DEV[x.device] || x.device}</span></span>
         <span class="b-phase">${phase(x)}</span>
         <span class="b-num">${x.ms ? `${f1(x.ms)} ms` : ''}</span>
         <span class="b-num">${x.xrt ? `${f1(x.xrt)}×` : ''}</span>
@@ -642,7 +696,7 @@ function viewBench() {
   if (c && !b.clip) b.clip = c.id;
   const tabs = clips().map((x) =>
     `<button class="${c && c.id === x.id ? 'on' : ''}" data-act="bench_pick" data-id="${esc(x.id)}" title="${x.origin === 'user' ? 'your clip' : 'built in'}">${esc(x.title)}</button>`).join('');
-  return `${head('Benchmark', 'Same tape, every model. Accuracy, speed, a grade, a winner.')}
+  return `${head('Benchmark', 'Same tape, any model, CPU or GPU. Accuracy, speed, a grade, a winner.')}
     <div class="row" style="margin-bottom:10px">
       ${when(tabs, `<div class="seg">${tabs}</div>`)}
       ${when(c, () => `<span class="dim mono" style="font-size:12px">${c.words} words${c.origin === 'user' ? ' · your clip' : ''}</span>`)}
@@ -740,6 +794,16 @@ const benchDisarm = () => {
 // A hidden page must never keep eating dictation (Rust disarms too; belt + braces).
 document.addEventListener('visibilitychange', () => { if (document.hidden) { benchDisarm(); refreshBench(); } });
 
+/// Under the device picker: where it ACTUALLY runs if that's not where you
+/// asked, else why the greyed-out GPUs are grey.
+function engineNote() {
+  const m = S.snap.model;
+  if (m.state === 'ready' && m.note) return `<div class="dev-note warn" title="${esc(m.note)}">⚠ ${esc(gist(m.note))}</div>`;
+  const bad = devices().filter((d) => !d.ok);
+  if (!bad.length) return '<div class="dev-note">GPU or CPU: same model, same accuracy. Changing either reloads it.</div>';
+  return bad.map((d) => `<div class="dev-note" title="${esc(d.reason)}"><b>${DEV[d.device]}</b> ${esc(gist(d.reason))}</div>`).join('');
+}
+
 function viewAdvanced() {
   const c = cfg();
   const fb = c.fbdirector != null;
@@ -755,9 +819,13 @@ function viewAdvanced() {
       </section>
       <section class="card">
         <h2>Engine</h2>
-        <p class="desc">ONNX Runtime threads ≈ physical P-cores. Find your knee:</p>
-        <code class="cmd">divinevoice bench clip.mp3 --thread-scan 1,2,4,8</code>
-        ${num('intra_threads', c.intra_threads, 'threads', '0 = ORT guesses · change reloads the model', 0, 64)}
+        <div class="grid2">
+          <div class="field"><label class="label">device</label>
+            ${select('device', devices().map((d) => `<option value="${d.device}" ${c.device === d.device ? 'selected' : ''} ${d.ok ? '' : 'disabled'}>${DEV_LONG[d.device]}${d.ok ? '' : ' · n/a'}</option>`).join(''), 'width:100%')}
+            <div class="hint">race them on Benchmark</div></div>
+          ${num('intra_threads', c.intra_threads, 'threads', '0 = ORT guesses', 0, 64)}
+        </div>
+        ${engineNote()}
       </section>
       <section class="card">
         <h2>Interception ${S.snap.interception ? '<span class="pill ok">driver on</span>' : '<span class="pill off">driver off</span>'}</h2>
@@ -790,8 +858,8 @@ function viewAbout() {
   return `${head('About')}
     <section class="card about-hero">
       <div class="wordmark">DIVINE<b>//</b>VOICE</div>
-      <p class="sec" style="max-width:560px">Local push-to-talk dictation. NVIDIA Parakeet on your CPU, text wherever your cursor is: through Parsec, through a hardware KVM, through whatever.</p>
-      <div class="row"><span class="pill">v${esc(s.version)}</span><span class="chip">MIT</span><span class="chip">no cloud · no telemetry</span></div>
+      <p class="sec" style="max-width:560px">Local push-to-talk dictation. NVIDIA Parakeet on your CPU or GPU, text wherever your cursor is: through Parsec, through a hardware KVM, through whatever.</p>
+      <div class="row"><span class="pill">v${esc(s.version)}</span><span class="chip">GPL-2.0-or-later</span><span class="chip">no cloud · no telemetry</span></div>
     </section>
     <section class="card">
       <dl class="kv">
@@ -824,7 +892,7 @@ const renderChrome = () => {
   $('#tb-crumb').textContent = `/ ${PAGES[S.page].name}`;
   $('#tb-status').innerHTML = `
     ${when(p50, () => `<span>p50 <b>${p50}</b> ms</span>`)}
-    <span>asr <b>${ms.cls === 'ok' ? 'ready' : esc(s.model.state)}</b></span>
+    <span>asr <b>${s.model.state === 'ready' ? esc((DEV[s.model.device] || s.model.device).toLowerCase()) : esc(s.model.state)}</b></span>
     <span class="tb-mode ${mode}"><span class="dot ${dotCls}"></span>${esc(MODE_TEXT[mode] || mode)}</span>`;
 
   $('#nav-foot').innerHTML = `
@@ -1005,7 +1073,7 @@ const ACT = {
     SFX.unlock(); SFX.arm();
     b.take = null; b.view = 'take'; b.revealed = 0; clearInterval(b.timer);
     benchPart('term-body', termBody());
-    ipc('race', { clip: c.id });
+    ipc('race', { clip: c.id, ...raceScope() });
     stopAudio();
     if (S.play) {
       b.audio = new Audio(`/clip/${encodeURIComponent(c.id)}`);
@@ -1025,7 +1093,15 @@ const ACT = {
     render();
   },
   bench_disarm: () => { benchDisarm(); render(); },
-  race: () => ipc('race'),
+  race: () => ipc('race', raceScope()),
+  // Device chips are multi-select, but never zero: an empty race is a no-op with extra steps.
+  bench_dev: (el) => {
+    const d = el.dataset.dev, cur = benchDevs();
+    const next = Object.keys(DEV).filter((x) => x === d ? !cur.includes(d) : cur.includes(x));
+    if (!next.length) return;
+    S.bench.devs = next; pref.set('dv.bdevs', next);
+    refreshBench();
+  },
   race_cancel: () => { ipc('race_cancel'); stopAudio(); },
   bench_view: (el) => {
     S.bench.view = el.dataset.id;
@@ -1087,6 +1163,7 @@ const valueOf = (el) => {
 };
 
 document.addEventListener('change', (e) => {
+  if (e.target.matches('[data-bmodels]')) { S.bench.models = e.target.value; pref.set('dv.bmodels', e.target.value); return; }
   const el = e.target.closest('[data-key]');
   if (el) ipc('set', { key: el.dataset.key, value: valueOf(el) });
 });
