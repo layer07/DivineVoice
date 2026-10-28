@@ -1,0 +1,71 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-2.0-or-later
+  index.html
+
+  Version: @(#)index.html 0.2.0 2026
+
+  Description: The Settings Shell.
+               Served from inside the exe via dv://. No web server, no bundler,
+               no node_modules. Just three files and spite. Titlebar is ours; the
+               Windows one is gone.
+
+  Author: Magnus Leatti (layer07)
+  URL: https://kernelriot.com
+  Github: /layer07
+
+         ██▓    ▄▄▄     ▓██   ██▓▓█████  ██▀███
+        ▓██▒   ▒████▄    ▒██  ██▒▓█   ▀ ▓██ ▒ ██▒
+        ▒██░   ▒██  ▀█▄   ▒██ ██░▒███   ▓██ ░▄█ ▒
+        ▒██░   ░██▄▄▄▄██  ░ ▐██▓░▒▓█ ▄ ▒██▀▀█▄
+        ░██████▒▓█   ▓██▒ ░ ██▒▓░░▒████▒░██▓ ▒██▒
+        ░ ▒░▓  ░▒▒   ▓▒█░  ██▒▒▒ ░░ ▒░ ░░ ▒▓ ░▒▓░
+        ░ ░ ▒  ░ ▒   ▒▒ ░▓██ ░▒░  ░ ░  ░  ░▒ ░ ▒░
+          ░ ░    ░   ▒   ▒ ▒ ░░     ░     ░░   ░
+            ░  ░     ░  ░░ ░        ░  ░   ░
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DivineVoice</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/theme.css">
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <div class="app">
+    <header class="titlebar" id="titlebar">
+      <div class="tb-brand">
+        <svg class="tb-glyph" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M2 6 6 2h16v16l-4 4H2z" class="g-frame"/>
+          <path d="M6 12h1.5M9 8v8M12 5v14M15 9v6M18 11v2" class="g-wave"/>
+        </svg>
+        <span class="wordmark">DIVINE<b>//</b>VOICE</span>
+        <span class="tb-crumb" id="tb-crumb">/ core</span>
+      </div>
+      <div class="tb-drag"></div>
+      <div class="tb-status" id="tb-status"></div>
+      <div class="tb-ctl">
+        <button class="tb-btn" data-act="win_min" title="Minimise to tray" aria-label="Minimise to tray">
+          <svg viewBox="0 0 12 12"><path d="M2 6.5h8"/></svg>
+        </button>
+        <button class="tb-btn close" data-act="win_close" title="Close to tray (quit from the tray menu)" aria-label="Close to tray">
+          <svg viewBox="0 0 12 12"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7"/></svg>
+        </button>
+      </div>
+    </header>
+    <aside class="nav">
+      <nav id="nav"></nav>
+      <div class="nav-foot-wrap">
+        <!-- the mascot. stands on the line, jumps off it, lands on it. forever. -->
+        <img class="mascot" src="/mascot.webp" alt="" draggable="false">
+        <div class="nav-foot" id="nav-foot"></div>
+      </div>
+    </aside>
+    <main id="page" tabindex="-1"></main>
+    <footer class="bar" id="bar"></footer>
+  </div>
+  <div id="toasts" aria-live="polite"></div>
+  <script src="/app.js"></script>
+</body>
+</html>

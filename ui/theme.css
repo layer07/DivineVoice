@@ -1,0 +1,48 @@
+/* ====================================================================
+   DEFAULT.CSS - corpo-doom (Dark)
+   ==================================================================== */
+
+:root {
+    /* Accent system */
+    --io-accent: #FF005D;
+    --io-accent-bright: #FF3D84;
+    --io-accent-dim: #A3003C;
+    --io-accent-glow: rgba(255,0,93,0.21);
+    --io-accent-subtle: rgba(255,0,93,0.08);
+
+    /* Semantic states */
+    --io-success: #66ff33;
+    --io-warning: #ffe066;
+    --io-error: #ff4d4d;
+    --io-info: #66c2ff;
+
+    --io-success-dim: #52cc29;
+    --io-warning-dim: #ccb352;
+    --io-error-dim: #cc3d3d;
+    --io-info-dim: #529bcc;
+
+    --io-success-subtle: rgba(102,255,51,0.08);
+    --io-warning-subtle: rgba(255,224,102,0.08);
+    --io-error-subtle: rgba(255,77,77,0.08);
+    --io-info-subtle: rgba(102,194,255,0.08);
+
+    /* Surfaces */
+    --io-surface-base: #0A0A0A;
+    --io-surface-raised: #121212;
+    --io-surface-sunken: #050505;
+    --io-surface-overlay: #1A1A1A;
+    --io-surface-hover: #212121;
+
+    /* Text */
+    --io-text-primary: #FFFFFF;
+    --io-text-secondary: #B8B8B8;
+    --io-text-tertiary: #666666;
+    --io-text-disabled: #444444;
+    --io-on-accent: #FFFFFF;
+
+    /* Borders */
+    --io-border: #1D1D1D;
+    --io-border-subtle: #161616;
+    --io-border-fade-base: 29,29,29;
+    --io-border-accent-fade-base: 255,0,93;
+}

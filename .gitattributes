@@ -1,0 +1,7 @@
+# LF in the repo and in the working tree, on every OS. No CRLF churn in diffs.
+* text=auto eol=lf
+
+# binaries: never touch
+*.webp binary
+*.ico  binary
+*.bin  binary

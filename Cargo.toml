@@ -1,0 +1,77 @@
+[package]
+name        = "divinevoice"
+version     = "0.2.0"
+edition     = "2021"
+authors     = ["Magnus Leatti (layer07) <djleatti@gmail.com>"]
+license     = "GPL-2.0-or-later"
+description = "Hold Ctrl+Space, talk, let go. Parakeet TDT v3 on CPU, text lands wherever your cursor is — even through Parsec and a hardware KVM."
+repository  = "https://github.com/layer07/DivineVoice"
+homepage    = "https://kernelriot.com"
+readme      = "README.md"
+keywords    = ["speech-to-text", "push-to-talk", "parakeet", "windows", "dictation"]
+categories  = ["accessibility", "multimedia::audio"]
+
+[[bin]]
+name = "divinevoice"
+path = "src/main.rs"
+
+[dependencies]
+# ASR. CPU execution provider only — see README "Why no GPU". parakeet-rs pulls
+# ort (ONNX Runtime) and links it statically; no DLL zoo next to the exe.
+parakeet-rs = "0.3"
+
+# Mic. WASAPI under the hood.
+cpal = "0.15"
+
+# `bench` subcommand: decode mp3/wav/flac/m4a/ogg into PCM.
+symphonia = { version = "0.5", features = ["mp3", "wav", "flac", "aac", "isomp4", "vorbis"] }
+
+# fbdirector bus framing (optional at runtime; off unless configured).
+postcard = { version = "1", features = ["use-std"] }
+
+arboard            = "3"
+serde              = { version = "1", features = ["derive"] }
+serde_json         = "1"
+toml               = "0.8"
+anyhow             = "1"
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender   = "0.2"
+crossbeam-channel  = "0.5"
+parking_lot        = "0.12"
+
+# UI. tao owns the main-thread event loop; the tray hangs off it; the settings
+# window is a WebView2 (preinstalled on Win10/11) that only exists while open.
+# HTML/CSS/JS are embedded with include_str! — no npm, no bundler, no node_modules
+# black hole.
+tao       = "0.37"
+wry       = "0.57"
+tray-icon = "0.26"
+
+# Model downloads from HuggingFace. Blocking, rustls, follows the CDN redirect.
+ureq = "3"
+
+# NOTE: no `interception` crate. It load-time links interception.dll, so the exe
+# refuses to even start on a box without it. We LoadLibrary it ourselves in
+# src/interception.rs and degrade gracefully. See that file for the gory bits.
+
+[target.'cfg(windows)'.dependencies.windows]
+version  = "0.58"
+features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Console",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+]
+
+[build-dependencies]
+winresource = "0.1"
+
+[profile.release]
+lto           = "thin"
+codegen-units = 1
+strip         = true
+panic         = "unwind"   # the supervisor in main.rs catches panics. Do not set "abort".

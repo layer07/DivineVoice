@@ -1,0 +1,13 @@
+# build output
+/target
+
+# 2.5 GB of NVIDIA weights — download from HuggingFace, never commit
+/model
+
+# local audio for `bench` — probably your voice, keep it off GitHub
+/samples
+
+# third-party kernel-driver DLL, not ours to redistribute
+interception.dll
+
+*.log
