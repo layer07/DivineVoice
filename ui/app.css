@@ -601,6 +601,13 @@ table.runs { width: 100%; border-collapse: collapse; font: 12px var(--mono); }
 .term-prog { height: 3px; background: var(--io-surface-raised); }
 .term-prog i { display: block; height: 100%; width: 0; background: var(--io-accent); box-shadow: 0 0 10px var(--io-accent); transition: width .1s linear; }
 .term-prog i.over { background: var(--io-warning); box-shadow: 0 0 10px var(--io-warning); animation: blink .6s steps(1) infinite; }
+/* racing, no verdict yet: a scanner sweeps the bar like a tape head */
+.term-prog.scan { background:
+  linear-gradient(90deg, transparent, var(--io-accent) 50%, transparent) 0 0 / 30% 100% no-repeat, var(--io-surface-raised);
+  animation: scan 1s linear infinite; }
+.term-prog.scan i { display: none; }
+@keyframes scan { from { background-position: -30% 0, 0 0; } to { background-position: 130% 0, 0 0; } }
+.term-body .pw.pre { white-space: pre-wrap; color: var(--io-text-tertiary); }
 
 .bstat { margin: 8px 0 6px; min-height: 34px; flex-wrap: nowrap; }
 .bstat b { letter-spacing: .12em; font-size: 12px; }

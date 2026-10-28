@@ -50,6 +50,7 @@ mod audio;
 mod bench;
 mod binding;
 mod bus;
+mod clips;
 mod config;
 mod dsp;
 mod history;
@@ -93,6 +94,10 @@ fn main() -> Result<()> {
             win::attach_parent_console();
             fetch(args.get(1).map(String::as_str))
         }
+        Some("race") => {
+            win::attach_parent_console();
+            headless_race(&args[1..])
+        }
         Some("bench") => {
             win::attach_parent_console();
             let (cfg, _) = Config::load();
@@ -109,6 +114,7 @@ fn main() -> Result<()> {
                    usage: divinevoice [--settings | --version]\n\
                    \x20      divinevoice models                      list the catalogue\n\
                    \x20      divinevoice fetch <id>                  download a model, headless\n\
+                   \x20      divinevoice race --clip <id>            race every model on a clip (JSON lines)\n\
                    \x20      divinevoice bench <audio> [--model <dir|id>] [--iters N] [--thread-scan 1,2,4,8] [--text]")
         }
     }
@@ -176,6 +182,26 @@ fn fetch(id: Option<&str>) -> Result<()> {
         let _ = std::io::stdout().flush();
     })?;
     println!("\ndone in {:.0?}", t0.elapsed());
+    Ok(())
+}
+
+/// `divinevoice race --clip <id>`: the Benchmark tab's race, no window. Prints
+/// the page's events as JSON lines (race_start, race_step, race_result,
+/// race_end), so `| jq` gets you a leaderboard on a box with no screen.
+fn headless_race(args: &[String]) -> Result<()> {
+    let id = match args {
+        [flag, id] if flag == "--clip" => id.as_str(),
+        _ => bail!("usage: divinevoice race --clip <id>   (clips: {})",
+            clips::list().into_iter().map(|c| c.id).collect::<Vec<_>>().join(", ")),
+    };
+    let (cfg, _) = Config::load();
+    let state = Arc::new(State::new(cfg));
+    let (pcm, clip) = clips::pcm(id)?;
+    ui::echo_to_stdout();
+    race::start(Arc::clone(&state), Arc::new(pcm), clip.script)?;
+    while state.racing.load(std::sync::atomic::Ordering::Acquire) {
+        std::thread::sleep(Duration::from_millis(50));
+    }
     Ok(())
 }
 

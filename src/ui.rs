@@ -80,8 +80,14 @@ fn post(e: UserEvent) {
 /// Send an event to the page, from any thread. No window open = no-op.
 pub fn push<T: Serialize + ?Sized>(ev: &str, data: &T) {
     let msg = serde_json::json!({ "ev": ev, "data": data });
+    if ECHO.load(std::sync::atomic::Ordering::Relaxed) { println!("{msg}"); }
     post(UserEvent::Push(msg.to_string()));
 }
+
+/// Headless mode (`divinevoice race`): page events go to stdout as JSON lines
+/// instead of into a window. Same events, so the CLI is the UI's twin.
+static ECHO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub fn echo_to_stdout() { ECHO.store(true, std::sync::atomic::Ordering::Relaxed) }
 
 /// "The world changed, re-render." Cheap; the loop coalesces nothing and
 /// doesn't need to — these are rare.
@@ -280,16 +286,20 @@ const ASSETS: &[(&str, &str, &[u8])] = &[
 
 fn serve(req: &Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {
     let path = match req.uri().path() { "/index.html" => "/", p => p };
-    let hit = ASSETS.iter().find(|(p, _, _)| *p == path);
-    let (status, mime, body) = hit
-        .map(|&(_, m, b)| (200, m, b))
-        .unwrap_or((404, "text/plain", b"404: not in the binary".as_slice()));
+    // /clip/<id>: benchmark audio for play-along (baked or from %APPDATA%).
+    let clip = path.strip_prefix("/clip/").and_then(crate::clips::audio);
+    let (status, mime, body): (u16, &str, Cow<'static, [u8]>) = match clip {
+        Some((bytes, mime)) => (200, mime, bytes),
+        None => ASSETS.iter().find(|(p, _, _)| *p == path)
+            .map(|&(_, m, b)| (200, m, Cow::Borrowed(b)))
+            .unwrap_or((404, "text/plain", Cow::Borrowed(b"404: not in the binary".as_slice()))),
+    };
     debug!("dv:// {} → {status}", req.uri());
     Response::builder()
         .status(status)
         .header(CONTENT_TYPE, mime)
         .header("Content-Security-Policy",
             "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:")
-        .body(Cow::Borrowed(body))
+        .body(body)
         .expect("static response")
 }

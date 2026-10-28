@@ -80,6 +80,7 @@ pub fn snapshot(state: &State, full: bool) -> Value {
         "download":     *state.download.lock(),
         "interception": state.interception.load(Ordering::Acquire),
         "history":      state.history.list(),
+        "clips":        crate::clips::list(),
         "perf":         perf_view(state),
         "paths": {
             "config": Config::path(),
@@ -134,7 +135,18 @@ fn dispatch(state: &Arc<State>, cmd: &str, m: &Value) -> Result<Vec<String>> {
             vec![]
         }
         "bench_disarm" => { state.disarm_bench(); vec![] }
-        "race" => { crate::race::start(Arc::clone(state))?; vec![] }
+        // Race a benchmark clip ({clip: id}) or, without one, your last read-along take.
+        "race" => {
+            let (take, reference) = match m["clip"].as_str() {
+                Some(id) => {
+                    let (pcm, c) = crate::clips::pcm(id)?;
+                    (Arc::new(pcm), c.script)
+                }
+                None => crate::race::last_take(state)?,
+            };
+            crate::race::start(Arc::clone(state), take, reference)?;
+            vec![]
+        }
         "race_cancel" => { state.race_cancel.store(true, Ordering::Release); vec![] }
 
         "learn" => { hotkey::learn(); vec![] }

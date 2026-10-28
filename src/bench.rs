@@ -36,42 +36,56 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use symphonia::core::audio::{AudioBufferRef, Signal};
-use symphonia::core::codecs::DecoderOptions;
-use symphonia::core::conv::IntoSample;
-use symphonia::core::errors::Error as SymErr;
-use symphonia::core::formats::FormatOptions;
-use symphonia::core::io::MediaSourceStream;
-use symphonia::core::meta::MetadataOptions;
-use symphonia::core::probe::Hint;
-
 use crate::audio::SR;
 use crate::config::Config;
-use crate::{asr, dsp};
+use crate::wer::{self, Op};
+use crate::{asr, clips};
 
-struct Opts { file: PathBuf, model: PathBuf, iters: usize, threads: Vec<Option<usize>>, text: bool }
+enum Input { File(PathBuf), Clip(String) }
+
+struct Opts {
+    input:     Input,
+    reference: Option<PathBuf>,
+    model:     PathBuf,
+    iters:     usize,
+    threads:   Vec<Option<usize>>,
+    text:      bool,
+}
 
 struct Run { threads: Option<usize>, load_ms: u128, cold_ms: u128, warm_ms: Vec<u128> }
 
-const USAGE: &str = "usage: divinevoice bench <audio-file> [--model <dir|catalogue-id>] [--iters N] \
-                     [--thread-scan 1,2,4,8] [--text]";
+const USAGE: &str = "usage: divinevoice bench <audio-file> [--reference script.txt]\n\
+                     \x20      divinevoice bench --clip <id>      (a benchmark clip; graded against its script)\n\
+                     \x20  options: --model <dir|catalogue-id>  --iters N  --thread-scan 1,2,4,8  --text";
 
 pub fn run(args: &[String], cfg: &Config) -> Result<()> {
     let o = parse(args, cfg)?;
 
-    println!("\n{} bench (CPU)\n──────────────────────────", crate::config::APP);
-    println!("file   {}\nmodel  {} ({:?})\niters  {} warm (+1 cold)\n",
-        o.file.display(), o.model.display(), crate::models::engine_of(&o.model), o.iters);
-
     let t0 = Instant::now();
-    let pcm = decode(&o.file)?;
+    let (pcm, label, script) = match &o.input {
+        Input::File(p) => {
+            let script = o.reference.as_ref()
+                .map(|r| std::fs::read_to_string(r).with_context(|| format!("read {}", r.display())))
+                .transpose()?;
+            (clips::decode_file(p)?, p.display().to_string(), script)
+        }
+        Input::Clip(id) => {
+            let (pcm, c) = clips::pcm(id)?;
+            (pcm, format!("clip {id} ({:?}, {} words)", c.origin, c.words), Some(c.script))
+        }
+    };
     let secs = pcm.len() as f64 / SR as f64;
+
+    println!("\n{} bench (CPU)\n──────────────────────────", crate::config::APP);
+    println!("audio  {label}\nmodel  {} ({:?})\niters  {} warm (+1 cold){}\n",
+        o.model.display(), crate::models::engine_of(&o.model), o.iters,
+        if script.is_some() { " · graded" } else { "" });
     println!("decoded {secs:.2}s of audio in {} ms\n", t0.elapsed().as_millis());
 
     let runs: Vec<Run> = o.threads.iter()
         .filter_map(|&t| {
             println!("═══ {} ═══", fmt_threads(t));
-            bench_one(t, &pcm, o.iters, &o.model, o.text)
+            bench_one(t, &pcm, o.iters, &o.model, o.text, script.as_deref())
                 .inspect(|r| print_run(r, secs))
                 .inspect_err(|e| println!("  ERROR: {e:#}\n"))
                 .ok()
@@ -84,6 +98,8 @@ pub fn run(args: &[String], cfg: &Config) -> Result<()> {
 
 fn parse(args: &[String], cfg: &Config) -> Result<Opts> {
     let mut file = None;
+    let mut clip = None;
+    let mut reference = None;
     let mut model = cfg.model_dir.clone();
     let mut iters = 10;
     let mut threads = vec![cfg.threads()];
@@ -98,71 +114,44 @@ fn parse(args: &[String], cfg: &Config) -> Result<Opts> {
                 .map(|x| x.trim().parse().map(Some))
                 .collect::<Result<_, _>>()
                 .context("--thread-scan wants e.g. 1,2,4,8")?,
-            // A catalogue id ("parakeet-ultra-int8") or any model folder.
+            // A catalogue id ("parakeet-ultra") or any model folder.
             "--model" | "-m" => model = val("--model").map(|v| crate::models::find(v)
                 .map_or_else(|| PathBuf::from(v), |s| s.dir()))?,
+            "--clip"         => clip = Some(val("--clip")?.clone()),
+            "--reference" | "-r" => reference = Some(PathBuf::from(val("--reference")?)),
             "--text" => text = true,
             f if f.starts_with('-') => bail!("unknown flag {f}\n{USAGE}"),
             f if file.is_none() => file = Some(PathBuf::from(f)),
             f => bail!("one audio file at a time, got a second: {f}"),
         }
     }
-    let file = file.ok_or_else(|| anyhow!(USAGE))?;
-    if !file.is_file() { bail!("not a file: {}", file.display()); }
-    if threads.is_empty() { bail!("--thread-scan needs at least one number"); }
-    Ok(Opts { file, model, iters: iters.max(1), threads, text })
-}
-
-// ── decode ───────────────────────────────────────────────────────────────────
-
-fn decode(path: &Path) -> Result<Vec<f32>> {
-    let src = std::fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
-    let mut hint = Hint::new();
-    if let Some(ext) = path.extension().and_then(|s| s.to_str()) { hint.with_extension(ext); }
-
-    let mut fmt = symphonia::default::get_probe()
-        .format(&hint, MediaSourceStream::new(Box::new(src), Default::default()),
-                &FormatOptions::default(), &MetadataOptions::default())
-        .context("unrecognised audio format")?
-        .format;
-    let track = fmt.default_track().ok_or_else(|| anyhow!("no audio track"))?.clone();
-    let rate  = track.codec_params.sample_rate.ok_or_else(|| anyhow!("no sample rate"))?;
-    let mut dec = symphonia::default::get_codecs()
-        .make(&track.codec_params, &DecoderOptions::default())
-        .context("no decoder for this codec")?;
-
-    let mut mono = Vec::with_capacity(rate as usize * 10);
-    loop {
-        let pkt = match fmt.next_packet() {
-            Ok(p) => p,
-            Err(SymErr::IoError(_) | SymErr::ResetRequired) => break, // EOF, symphonia-style
-            Err(e) => return Err(e.into()),
-        };
-        if pkt.track_id() != track.id { continue; }
-        match dec.decode(&pkt) {
-            Ok(buf) => append_mono(buf, &mut mono),
-            Err(SymErr::DecodeError(_)) => continue, // one bad frame isn't the end of the world
-            Err(SymErr::IoError(_)) => break,
-            Err(e) => return Err(e.into()),
+    let input = match (file, clip) {
+        (Some(_), Some(_)) => bail!("pick one: an audio file or --clip\n{USAGE}"),
+        (Some(f), None) => {
+            if !f.is_file() { bail!("not a file: {}", f.display()); }
+            Input::File(f)
         }
-    }
-    Ok(dsp::resample(&mono, rate, SR))
+        (None, Some(id)) => Input::Clip(id),
+        (None, None) => {
+            let have: Vec<_> = clips::list().into_iter().map(|c| c.id).collect();
+            bail!("{USAGE}\nclips available: {}", if have.is_empty() { "(none yet)".into() } else { have.join(", ") });
+        }
+    };
+    if threads.is_empty() { bail!("--thread-scan needs at least one number"); }
+    Ok(Opts { input, reference, model, iters: iters.max(1), threads, text })
 }
 
-fn append_mono(buf: AudioBufferRef<'_>, out: &mut Vec<f32>) {
-    // Symphonia gives planar buffers in 10 sample types. One macro, ten arms.
-    macro_rules! mix { ($b:expr) => {{
-        let ch = $b.spec().channels.count().max(1);
-        out.extend((0..$b.frames()).map(|i| {
-            (0..ch).map(|c| IntoSample::<f32>::into_sample($b.chan(c)[i])).sum::<f32>() / ch as f32
-        }));
-    }}}
-    use AudioBufferRef::*;
-    match buf {
-        F32(b) => mix!(b), F64(b) => mix!(b),
-        S8(b)  => mix!(b), S16(b) => mix!(b), S24(b) => mix!(b), S32(b) => mix!(b),
-        U8(b)  => mix!(b), U16(b) => mix!(b), U24(b) => mix!(b), U32(b) => mix!(b),
-    }
+/// "  wer   2.1%  (2/97)  steel→steal · −who · +the"
+fn print_grade(script: &str, text: &str) {
+    let s = wer::align(script, text);
+    let misses: Vec<String> = s.ops.iter().filter_map(|o| match o {
+        Op::Ok { .. }      => None,
+        Op::Sub { r, h }   => Some(format!("{r}→{h}")),
+        Op::Del { r }      => Some(format!("−{r}")),
+        Op::Ins { h }      => Some(format!("+{h}")),
+    }).collect();
+    println!("  wer   {:.1}%  ({}/{})  {}", s.wer * 100.0, s.errors, s.ref_words,
+        if misses.is_empty() { "perfect".into() } else { misses.join(" · ") });
 }
 
 // ── measure ──────────────────────────────────────────────────────────────────
@@ -173,7 +162,9 @@ fn ms_of<T>(f: impl FnOnce() -> T) -> (T, u128) {
     (r, t.elapsed().as_millis())
 }
 
-fn bench_one(threads: Option<usize>, pcm: &[f32], iters: usize, dir: &Path, full_text: bool) -> Result<Run> {
+fn bench_one(
+    threads: Option<usize>, pcm: &[f32], iters: usize, dir: &Path, full_text: bool, script: Option<&str>,
+) -> Result<Run> {
     let (model, load_ms) = ms_of(|| asr::load(dir, threads));
     let mut model = model?;
     println!("  load  {load_ms} ms");
@@ -181,6 +172,7 @@ fn bench_one(threads: Option<usize>, pcm: &[f32], iters: usize, dir: &Path, full
     let (text, cold_ms) = ms_of(|| asr::transcribe(&mut model, pcm.to_vec()));
     let text = text?;
     println!("  cold  {cold_ms} ms → {:?}", clip(&text, 60));
+    if let Some(s) = script { print_grade(s, &text); }
     if full_text { println!("\n--- transcript ---\n{text}\n------------------\n"); }
 
     let warm_ms = (1..=iters)

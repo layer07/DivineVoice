@@ -58,7 +58,7 @@ tray, so the app keeps listening. **Quit lives in the tray menu, and only there.
 | **Models** | Download, switch and delete models. Accuracy/speed bars, resumable downloads with live progress, or point at your own ONNX folder |
 | **Audio** | Pin a mic by name · min/max clip length |
 | **Perf** | The last 64 clips, timed from hotkey release to text delivered. p50/p95 latency, × real-time, words/s, your speaking pace in wpm, cold-start tax. A per-run bar chart with a stage breakdown (resample / queue / ASR / deliver). Numbers only, never your words |
-| **Benchmark** | Pick a passage (Classic, Twisters, DevOps, Português), **Arm**, and read it with the hotkey. The take comes back graded word by word in a terminal, with a shimmer reveal, substitutions/misses/insertions marked, accuracy, WER, latency, × real-time, your wpm and a letter grade. Then **Race**: the same recording runs through every installed model, and you click a row to see what that model heard. Synth sound effects, toggleable. While armed, dictation goes to the benchmark, not your cursor; leaving the tab or hiding the window disarms it |
+| **Benchmark** | Pick a clip and hit **▶ Run benchmark**: the same recorded tape runs through every installed model, your active one first. Its verdict is revealed word by word in a terminal with a shimmer, with substitutions, misses and insertions marked, plus accuracy, WER, ASR time, × real-time and a letter grade. The rest race onto a leaderboard; click a row to see what that model heard. Optional play-along through the speakers, synth sound effects. Clips live in [`bench/`](bench/README.md) (baked in) or `%APPDATA%\DivineVoice\bench` (yours, no rebuild). Prefer your own voice? *Read it yourself* arms the hotkey against the clip's script |
 | **History** | Opt-in list of recent transcripts, with copy and delete |
 | **Advanced** | Typing delays · ONNX threads · Interception skip list · fbdirector bus · log level |
 
@@ -100,6 +100,7 @@ too: Models ▸ *bring your own*.
 ```
 divinevoice models                    # list the catalogue, sizes, what's installed
 divinevoice fetch parakeet-ultra      # download one without opening the UI
+divinevoice race --clip classic       # race every installed model on a clip (JSON lines, pipe to jq)
 ```
 
 `fetch` and the Models page use the same downloader. Each file streams to a
@@ -240,7 +241,8 @@ and `app.css` uses only those tokens.
 | `models.rs` | Catalogue, engine detection, resumable HuggingFace downloader |
 | `perf.rs` | Per-clip stopwatch, 64-entry ring, pure p50/p95/xRT/wps/wpm stats |
 | `wer.rs` | The judge: word-level Levenshtein → ok/sub/del/ins + WER. Pure |
-| `race.rs` | Replays one Benchmark take through every installed model, one in RAM at a time |
+| `race.rs` | Replays one clip or take through every installed model, active first, one in RAM at a time |
+| `clips.rs` | Benchmark clips (baked from `bench/` by `build.rs`, or yours from `%APPDATA%`) + the audio decoder |
 | `history.rs` | Opt-in transcript history |
 | `inject.rs` | The four output modes and the fallback ladder |
 | `keymap.rs` | char → set-1 scancode as a keyboard-shaped table. Pure |
