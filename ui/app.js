@@ -187,6 +187,7 @@ const activeModelName = () => {
   const s = S.snap;
   const m = s.models.find((x) => x.id === s.active_model);
   if (m) return m.name;
+  if (!s.custom_model) return 'No model yet';
   const dir = s.model.dir || cfg().model_dir || '';
   return `Custom · ${dir.split(/[\\/]/).filter(Boolean).pop() || dir}`;
 };
@@ -217,7 +218,7 @@ const modelState = () => {
   return {
     loading: { cls: 'warn', text: 'loading…' },
     ready:   { cls: m.note ? 'warn' : 'ok', text: `${DEV[m.device] || m.device} · ${m.load_ms} ms load` },
-    missing: { cls: 'err',  text: 'no model — download one' },
+    missing: { cls: 'err',  text: 'download one to start' },
     parked:  { cls: 'warn', text: 'parked · GPU race borrowed the VRAM' },
     failed:  { cls: 'err',  text: 'failed to load' },
   }[m.state] || { cls: '', text: m.state };
@@ -362,7 +363,7 @@ function viewModels() {
   const s = S.snap;
   const installed = s.models.filter((m) => m.installed);
   const available = s.models.filter((m) => !m.installed);
-  const custom = !s.active_model;
+  const custom = s.custom_model;
   const ms = modelState();
   return `${head('Models', 'All local, CPU or GPU. Nothing you say leaves this machine.')}
     <div class="status-line"><span class="dot ${ms.cls}"></span>${esc(activeModelName())} — ${esc(ms.text)}</div>

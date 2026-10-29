@@ -61,7 +61,12 @@ fn toast(kind: &str, msg: impl Into<String>) -> String {
 /// enumeration hits the audio stack), so routine refreshes skip them.
 pub fn snapshot(state: &State, full: bool) -> Value {
     let cfg = state.cfg.read().clone();
-    let active = models::which(&cfg.model_dir).map(|s| s.id);
+    // Active = on disk and loadable. A fresh install's config points at the
+    // default (Ultra) before it's downloaded: that's a wish, not an active
+    // model, and showing it as ACTIVE hid its Download button.
+    let picked = models::which(&cfg.model_dir);
+    let active = picked.filter(|s| s.installed()).map(|s| s.id);
+    let custom = picked.is_none() && config::looks_like_model(&cfg.model_dir);
     let catalogue: Vec<Value> = CATALOGUE.iter().map(|s| {
         let mut v = serde_json::to_value(s).unwrap_or_default();
         v["size"] = s.size().into();
@@ -76,6 +81,7 @@ pub fn snapshot(state: &State, full: bool) -> Value {
         "status":       { "mode": state.mode(), "bus": state.bus_connected.load(Ordering::Acquire) },
         "model":        *state.model.read(),
         "active_model": active,
+        "custom_model": custom,
         "models":       catalogue,
         "download":     *state.download.lock(),
         "interception": state.interception.load(Ordering::Acquire),
