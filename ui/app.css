@@ -2,7 +2,7 @@
 /*
  * app.css
  *
- * Version: @(#)app.css 0.2.0 2026
+ * Version: @(#)app.css 0.3.0 2026
  *
  * Description: The Corpo-Doom Skin.
  *              Every colour from theme.css. Typing a hex code here? You doing it
@@ -731,6 +731,9 @@ table.runs { width: 100%; border-collapse: collapse; font: 12px var(--mono); }
 .dev-note { margin-top: 8px; font: 11.5px var(--mono); color: var(--io-text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dev-note b { color: var(--io-text-secondary); margin-right: 4px; }
 .dev-note.warn { color: var(--io-warning); }
+
+.hero-side { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.hero-side .switch { gap: 9px; font-size: 12px; }
 
 /* ── speed ──────────────────────────────────────────────────────────── */
 

@@ -1,6 +1,9 @@
 # build output
 /target
 
+# release zips, uploaded to GitHub Releases by hand
+/dist
+
 # 2.5 GB of NVIDIA weights — download from HuggingFace, never commit
 /model
 

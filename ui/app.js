@@ -2,7 +2,7 @@
 /*
  * app.js
  *
- * Version: @(#)app.js 0.2.0 2026
+ * Version: @(#)app.js 0.3.0 2026
  *
  * Description: The Settings Page Brain.
  *              No framework. View is pure function: state in, HTML out. One
@@ -206,7 +206,7 @@ const misfit = (d) => (S.snap.unsupported || []).find((u) => u.engine === active
 const devBtn = (d, on) => {
   const why = !d.ok ? `unavailable: ${d.reason}` : misfit(d.device);
   return `<button class="${on ? 'on' : ''}" ${why ? 'disabled' : `data-act="set" data-k="device" data-v="${d.device}"`}
-    title="${esc(why || DEV_LONG[d.device])}">${DEV[d.device]}</button>`;
+    title="${esc(why || (d.device === 'cpu' ? 'CPU · the default, works everywhere' : DEV_LONG[d.device]))}">${DEV[d.device]}</button>`;
 };
 
 /// The plain-English half of a GPU error; the raw ORT dump lives in the tooltip.
@@ -236,7 +236,10 @@ function heroHtml() {
     <div class="orb ${mode}"></div>
     <div><div class="label">status</div><div class="big ${mode}">${MODE_TEXT[mode] || mode}</div><div class="sub">${hint}</div></div>
     <div class="spacer"></div>
-    <div class="status-line"><span class="dot ${modelState().cls}"></span>${esc(activeModelName())}</div>
+    <div class="hero-side">
+      <div class="status-line"><span class="dot ${modelState().cls}"></span>${esc(activeModelName())}</div>
+      <label class="switch" title="Starts in the tray when you log in. No admin, nothing outside your user."><input type="checkbox" data-act="autostart" ${S.snap.autostart ? 'checked' : ''}><i></i><span class="dim">Start with Windows</span></label>
+    </div>
   </section>`;
 }
 
@@ -1123,7 +1126,12 @@ const toast = (kind, msg) => {
 // ── Rust → us ────────────────────────────────────────────────────────────
 
 const ON = {
-  hello: (d) => { S.snap = d; S.mics = d.mics || []; render(); },
+  hello: (d) => {
+    // First look and no model yet: Core can't do anything for you, Models can.
+    if (!S.greeted && d.model.state === 'missing') S.page = 'models';
+    S.greeted = true;
+    S.snap = d; S.mics = d.mics || []; render();
+  },
   state: (d) => { S.snap = { ...d, mics: undefined }; render(); },
   mics:  (d) => { S.mics = d; render(); toast('info', `${d.length} input device${d.length === 1 ? '' : 's'} found`); },
   status: (d) => {
@@ -1334,6 +1342,8 @@ const ACT = {
     ipc('set', { key: 'theme', value: id });
   },
   speed_metric: (el) => { S.speed = el.dataset.id; pref.set('dv.speed', S.speed); render(); },
+  autostart: (el) => ipc('autostart', { on: el.checked }),
+  autostart_flip: () => ipc('autostart', { on: !S.snap.autostart }),
   model_info: (el) => { S.info = S.info === el.dataset.id ? null : el.dataset.id; render(); },
   // Right-click ▸ Benchmark: straight to the race, active model, current device.
   bench_go: () => { ACT.page({ dataset: { page: 'bench' } }); ACT.race_clip(); },
@@ -1422,6 +1432,7 @@ const ctxHtml = () => {
     ${item('bench_go', `${I.bench}Benchmark this setup`)}
     ${when(last, () => item('copy', `${I.copy}Copy last transcript`, `data-id="${last.id}"`))}
     ${item('open', `${I.folder}Open logs`, 'data-what="logs"')}
+    ${item('autostart_flip', `<i class="ctx-dot ${s.autostart ? 'on' : ''}"></i>Start with Windows`)}
     <div class="ctx-sep"></div>
     ${item('win_min', 'Minimise to tray', '', 'Esc')}
     ${item('win_close', 'Close to tray', '', 'Alt+F4')}`;
@@ -1437,9 +1448,10 @@ document.addEventListener('contextmenu', (e) => {
   m.innerHTML = ctxHtml();
   document.body.append(m);
   // Open where you clicked, flipped back inside the window near the edges.
-  const r = m.getBoundingClientRect();
-  m.style.left = `${Math.min(e.clientX, innerWidth - r.width - 6)}px`;
-  m.style.top = `${Math.min(e.clientY, innerHeight - r.height - 6)}px`;
+  // offset*, not getBoundingClientRect: the open animation scales it to 96%
+  // and the rect would lie by exactly that much.
+  m.style.left = `${Math.max(6, Math.min(e.clientX, innerWidth - m.offsetWidth - 6))}px`;
+  m.style.top = `${Math.max(6, Math.min(e.clientY, innerHeight - m.offsetHeight - 6))}px`;
 });
 // Any click closes it: inside, after the item's action runs (bubbling hits
 // the action handler first); outside, straight away.

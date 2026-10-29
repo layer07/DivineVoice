@@ -2,7 +2,7 @@
 /*
  * main.rs
  *
- * Version: @(#)main.rs 0.2.0 2026
+ * Version: @(#)main.rs 0.3.0 2026
  *
  * Description: The Cave Entrance.
  *              Five threads and a tray. Hotkey hear finger. Audio hear mouth.
@@ -47,6 +47,7 @@
 
 mod asr;
 mod audio;
+mod autostart;
 mod bench;
 mod binding;
 mod bus;

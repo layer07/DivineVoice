@@ -2,7 +2,7 @@
 /*
  * models.rs
  *
- * Version: @(#)models.rs 0.2.0 2026
+ * Version: @(#)models.rs 0.3.0 2026
  *
  * Description: The Model Shop.
  *              Six models, three families, exact byte sizes from HuggingFace.

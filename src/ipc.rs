@@ -2,7 +2,7 @@
 /*
  * ipc.rs
  *
- * Version: @(#)ipc.rs 0.2.0 2026
+ * Version: @(#)ipc.rs 0.3.0 2026
  *
  * Description: The Settings Switchboard.
  *              Page send JSON, Rust answer JSON. Config write is one trick:
@@ -79,6 +79,7 @@ pub fn snapshot(state: &State, full: bool) -> Value {
         "models":       catalogue,
         "download":     *state.download.lock(),
         "interception": state.interception.load(Ordering::Acquire),
+        "autostart":    crate::autostart::enabled(),
         "history":      state.history.list(),
         "clips":        crate::clips::list(),
         "unsupported":  crate::asr::UNSUPPORTED.iter()
@@ -163,6 +164,12 @@ fn dispatch(state: &Arc<State>, cmd: &str, m: &Value) -> Result<Vec<String>> {
             vec![]
         }
         "race_cancel" => { state.race_cancel.store(true, Ordering::Release); vec![] }
+
+        "autostart" => {
+            let on = m["on"].as_bool().ok_or_else(|| anyhow!("autostart: on"))?;
+            crate::autostart::set(on)?;
+            refreshed(vec![toast("ok", if on { "starts with Windows" } else { "won't start with Windows" })])
+        }
 
         "learn" => { hotkey::learn(); vec![] }
         "learn_cancel" => { hotkey::cancel_learn(); vec![] }
