@@ -155,14 +155,9 @@ Themes from the ElectricWizard set.
   <b>Magnus Leatti</b> (layer07) · <a href="https://kernelriot.com">kernelriot.com</a> · <a href="https://github.com/layer07">github.com/layer07</a>
 </p>
 
-```
-        ██▓    ▄▄▄     ▓██   ██▓▓█████  ██▀███
-       ▓██▒   ▒████▄    ▒██  ██▒▓█   ▀ ▓██ ▒ ██▒
-       ▒██░   ▒██  ▀█▄   ▒██ ██░▒███   ▓██ ░▄█ ▒
-       ▒██░   ░██▄▄▄▄██  ░ ▐██▓░▒▓█ ▄ ▒██▀▀█▄
-       ░██████▒▓█   ▓██▒ ░ ██▒▓░░▒████▒░██▓ ▒██▒
-       ░ ▒░▓  ░▒▒   ▓▒█░  ██▒▒▒ ░░ ▒░ ░░ ▒▓ ░▒▓░
-       ░ ░ ▒  ░ ▒   ▒▒ ░▓██ ░▒░  ░ ░  ░  ░▒ ░ ▒░
-         ░ ░    ░   ▒   ▒ ▒ ░░     ░     ░░   ░
-           ░  ░     ░  ░░ ░        ░  ░   ░
-```
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/layer07-dark.svg">
+    <img src="docs/layer07-light.svg" alt="layer07" width="402">
+  </picture>
+</p>
