@@ -2,7 +2,7 @@
 /*
  * bus.rs
  *
- * Version: @(#)bus.rs 0.3.0 2026
+ * Version: @(#)bus.rs 0.3.1 2026
  *
  * Description: The fbdirector Handshake.
  *              Optional. Call fbdirector on loopback, say "this chord is mine",

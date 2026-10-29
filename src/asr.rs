@@ -2,7 +2,7 @@
 /*
  * asr.rs
  *
- * Version: @(#)asr.rs 0.3.0 2026
+ * Version: @(#)asr.rs 0.3.1 2026
  *
  * Description: The Ear Brain.
  *              Clip come in, words come out. Parakeet on CPU or GPU, you pick,

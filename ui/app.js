@@ -2,7 +2,7 @@
 /*
  * app.js
  *
- * Version: @(#)app.js 0.3.0 2026
+ * Version: @(#)app.js 0.3.1 2026
  *
  * Description: The Settings Page Brain.
  *              No framework. View is pure function: state in, HTML out. One

@@ -2,7 +2,7 @@
 /*
  * dsp.rs
  *
- * Version: @(#)dsp.rs 0.3.0 2026
+ * Version: @(#)dsp.rs 0.3.1 2026
  *
  * Description: The Whole Signal Department.
  *              Two pure functions. Downmix: average the channels. Resample:

@@ -2,7 +2,7 @@
 /*
  * perf.rs
  *
- * Version: @(#)perf.rs 0.3.0 2026
+ * Version: @(#)perf.rs 0.3.1 2026
  *
  * Description: The Stopwatch.
  *              "Feels fast" is not a number. Release, resample, queue, asr,

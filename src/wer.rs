@@ -2,7 +2,7 @@
 /*
  * wer.rs
  *
- * Version: @(#)wer.rs 0.3.0 2026
+ * Version: @(#)wer.rs 0.3.1 2026
  *
  * Description: The Judge.
  *              What you were supposed to say, what the machine heard, and

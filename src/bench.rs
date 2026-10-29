@@ -2,7 +2,7 @@
 /*
  * bench.rs
  *
- * Version: @(#)bench.rs 0.3.0 2026
+ * Version: @(#)bench.rs 0.3.1 2026
  *
  * Description: The Truth Machine.
  *              Decode audio file. Load model. Run cold, run warm, run again.

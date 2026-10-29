@@ -2,7 +2,7 @@
 /*
  * clips.rs
  *
- * Version: @(#)clips.rs 0.3.0 2026
+ * Version: @(#)clips.rs 0.3.1 2026
  *
  * Description: The Tape Library.
  *              Benchmark clips: audio plus the exact script it reads. Baked

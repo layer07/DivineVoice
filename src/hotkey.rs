@@ -2,7 +2,7 @@
 /*
  * hotkey.rs
  *
- * Version: @(#)hotkey.rs 0.3.0 2026
+ * Version: @(#)hotkey.rs 0.3.1 2026
  *
  * Description: The Ear On The Keyboard.
  *              WH_KEYBOARD_LL, not a filter driver. Old capture filter hold every

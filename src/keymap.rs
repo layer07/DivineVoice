@@ -2,7 +2,7 @@
 /*
  * keymap.rs
  *
- * Version: @(#)keymap.rs 0.3.0 2026
+ * Version: @(#)keymap.rs 0.3.1 2026
  *
  * Description: The Keyboard Map.
  *              char to set-1 scancode, US-QWERTY, table shaped like a real

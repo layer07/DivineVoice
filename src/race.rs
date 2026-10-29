@@ -2,7 +2,7 @@
 /*
  * race.rs
  *
- * Version: @(#)race.rs 0.3.0 2026
+ * Version: @(#)race.rs 0.3.1 2026
  *
  * Description: The Race Track.
  *              You read once. Every model hears the same take: same breath,

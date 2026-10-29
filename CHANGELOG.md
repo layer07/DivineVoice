@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.1 · 2026-10-29
+
+- **Fix: fresh installs couldn't download the default model.** The config
+  points at Parakeet Ultra before it exists, and the Models page showed it as
+  ACTIVE instead of offering Download. A model is now active only once it's on
+  disk; until then nothing is, and the status says "No model yet".
+
 ## 0.3.0 · 2026-10-28
 
 **GPU, more models, receipts.**

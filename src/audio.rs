@@ -2,7 +2,7 @@
 /*
  * audio.rs
  *
- * Version: @(#)audio.rs 0.3.0 2026
+ * Version: @(#)audio.rs 0.3.1 2026
  *
  * Description: The Mouth Catcher.
  *              Hotkey say start, mic open. Hotkey say stop, mic close. Callback
