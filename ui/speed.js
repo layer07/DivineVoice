@@ -6,10 +6,12 @@
  *
  * Description: The Lab Notebook.
  *              Reference numbers from one rig, so you know CPU vs GPU and
- *              model vs model before you download 3 GB. Sentence numbers:
- *              `bench --first 5 [--gap 5000] --json`, p50. Long clip + WER:
- *              `race` on both built-in clips. Measured, never typed in.
- *              Regenerate after a model or runtime bump.
+ *              model vs model before you download 3 GB. Sentences: eight
+ *              phrases of different lengths, p50 of
+ *              `bench --first 1.8,3.1,…,5.2 [--gap 5000 --press 2000] --json`
+ *              (a repeated slice flatters DirectML; real phrases never repeat
+ *              a length). Long clip + WER: `race` on both built-in clips.
+ *              Measured, never typed in. Regenerate after any runtime bump.
  *
  * Author: Magnus Leatti (layer07)
  * URL: https://kernelriot.com
@@ -21,7 +23,8 @@ window.DV_SPEED = {
   "gpu": "RTX 3080 10 GB · DirectML",
   "ram": "64 GB",
   "threads": 8,
-  "when": "2026-10-28 · NVIDIA 566.36 · parakeet-rs 0.4.3"
+  "when": "2026-10-28 · NVIDIA 566.36 · parakeet-rs 0.4.3",
+  "note": "Measured with Parsec streaming the desktop and a browser open: how this machine is actually used. Sentences swing ±30–50% run to run; repeated passes are averaged. The ranking holds."
  },
  "rows": [
   {
@@ -34,18 +37,18 @@ window.DV_SPEED = {
    ],
    "dev": {
     "cpu": {
-     "idle": 123,
-     "warm": 114,
-     "cold": 126,
-     "load": 1985,
+     "idle": 196,
+     "warm": 83,
+     "cold": 64,
+     "load": 1930,
      "long": 884,
      "long_xrt": 45.0
     },
     "directml": {
-     "idle": 291,
-     "warm": 135,
-     "cold": 1095,
-     "load": 2438,
+     "idle": 242,
+     "warm": 147,
+     "cold": 144,
+     "load": 2468,
      "long": 1561,
      "long_xrt": 25.5
     }
@@ -61,18 +64,18 @@ window.DV_SPEED = {
    ],
    "dev": {
     "cpu": {
-     "idle": 130,
-     "warm": 132,
-     "cold": 143,
-     "load": 2569,
+     "idle": 120,
+     "warm": 113,
+     "cold": 83,
+     "load": 2461,
      "long": 1360,
      "long_xrt": 29.2
     },
     "directml": {
-     "idle": 246,
-     "warm": 176,
-     "cold": 527,
-     "load": 2269,
+     "idle": 242,
+     "warm": 161,
+     "cold": 132,
+     "load": 2012,
      "long": 1235,
      "long_xrt": 32.2
     }
@@ -88,18 +91,18 @@ window.DV_SPEED = {
    ],
    "dev": {
     "cpu": {
-     "idle": 144,
-     "warm": 137,
-     "cold": 150,
-     "load": 2439,
+     "idle": 212,
+     "warm": 100,
+     "cold": 71,
+     "load": 2920,
      "long": 1024,
      "long_xrt": 38.8
     },
     "directml": {
-     "idle": 336,
-     "warm": 264,
-     "cold": 573,
-     "load": 2323,
+     "idle": 282,
+     "warm": 216,
+     "cold": 224,
+     "load": 2175,
      "long": 1986,
      "long_xrt": 20.0
     }
@@ -115,18 +118,18 @@ window.DV_SPEED = {
    ],
    "dev": {
     "cpu": {
-     "idle": 148,
-     "warm": 127,
-     "cold": 166,
-     "load": 2641,
+     "idle": 94,
+     "warm": 88,
+     "cold": 71,
+     "load": 2621,
      "long": 997,
      "long_xrt": 39.9
     },
     "directml": {
-     "idle": 84,
-     "warm": 46,
-     "cold": 374,
-     "load": 2559,
+     "idle": 76,
+     "warm": 41,
+     "cold": 57,
+     "load": 2360,
      "long": 275,
      "long_xrt": 144.7
     }
@@ -142,10 +145,10 @@ window.DV_SPEED = {
    ],
    "dev": {
     "cpu": {
-     "idle": 5245,
-     "warm": 5178,
-     "cold": 5894,
-     "load": 1249,
+     "idle": 3828,
+     "warm": 4447,
+     "cold": 2604,
+     "load": 1209,
      "long": 19304,
      "long_xrt": 2.1
     },
@@ -164,18 +167,18 @@ window.DV_SPEED = {
    ],
    "dev": {
     "cpu": {
-     "idle": 760,
-     "warm": 762,
-     "cold": 803,
-     "load": 2043,
+     "idle": 499,
+     "warm": 389,
+     "cold": 253,
+     "load": 1941,
      "long": 4861,
      "long_xrt": 8.2
     },
     "directml": {
-     "idle": 1360,
-     "warm": 1300,
-     "cold": 1685,
-     "load": 1991,
+     "idle": 1435,
+     "warm": 686,
+     "cold": 396,
+     "load": 1727,
      "long": 7504,
      "long_xrt": 5.3
     }
@@ -191,18 +194,18 @@ window.DV_SPEED = {
    ],
    "dev": {
     "cpu": {
-     "idle": 758,
-     "warm": 791,
-     "cold": 800,
-     "load": 2004,
+     "idle": 805,
+     "warm": 466,
+     "cold": 299,
+     "load": 1989,
      "long": 5116,
      "long_xrt": 7.8
     },
     "directml": {
-     "idle": 1382,
-     "warm": 1266,
-     "cold": 1602,
-     "load": 1811,
+     "idle": 958,
+     "warm": 666,
+     "cold": 410,
+     "load": 1726,
      "long": 6884,
      "long_xrt": 5.8
     }

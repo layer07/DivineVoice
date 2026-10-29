@@ -70,27 +70,84 @@ use crate::perf::{self, Clip, Transcript};
 use crate::state::{Mode, ModelStatus, State};
 use crate::ui;
 
-/// A loaded model, whichever engine it needs. TDT and Unified speak
-/// parakeet-rs's Transcriber trait (Unified's impl is its OFFLINE path: full
-/// context, the low-WER mode). Nemotron runs its streaming encoder over the
-/// whole clip in one go. Cohere is an encoder-decoder that must be told the
-/// language, so it carries the code it was loaded for.
-pub enum Model {
+/// Whichever engine the model needs. TDT and Unified speak parakeet-rs's
+/// Transcriber trait (Unified's impl is its OFFLINE path: full context, the
+/// low-WER mode). Nemotron runs its streaming encoder over the whole clip in
+/// one go. Cohere is an encoder-decoder that must be told the language, so
+/// it carries the code it was loaded for.
+enum Net {
     Tdt(Box<ParakeetTDT>),
     Unified(Box<ParakeetUnified>),
     Nemotron(Box<Nemotron>),
     Cohere { m: Box<CohereASR>, lang: String },
 }
 
+// ── the DirectML first-shape trap ────────────────────────────────────────────
+//
+// DirectML builds its fast path for the FIRST input length a session ever
+// runs, and every other length takes a ~3× slower path, forever. Measured on
+// v3, back to back: first run 4 s → every 4 s clip 82 ms, every 8 s clip
+// 250 ms, even four 8 s clips in a row. We used to warm up with 1 s of
+// silence, so on the GPU every real sentence was on the slow path. That's
+// the "CPU feels faster" everyone noticed before we did.
+//
+// Fix: on DirectML the warm-up IS a GPU_BUCKET_S clip, and every shorter clip
+// is padded with silence up to it. Same shape, every time, fast path. Longer
+// clips stay as they are: past a few seconds we're in throughput land, where
+// even the slow path is quick. CPU doesn't care about shapes; no padding there.
+//
+// The other GPU tax is clocking up after a pause. `prime` pays it while you're
+// still holding the hotkey, so by the time you let go the card is awake.
+
+/// The one length DirectML gets to see below it. 6 s covers most sentences.
+pub const GPU_BUCKET_S: usize = 6;
+
+/// A loaded model and the length it wants clips padded to (None = as-is).
+pub struct Model {
+    net:    Net,
+    pad_to: Option<usize>,
+}
+
 impl Model {
     pub fn engine(&self) -> Engine {
-        match self {
-            Self::Tdt(_)        => Engine::Tdt,
-            Self::Unified(_)    => Engine::Unified,
-            Self::Nemotron(_)   => Engine::Nemotron,
-            Self::Cohere { .. } => Engine::Cohere,
+        match self.net {
+            Net::Tdt(_)        => Engine::Tdt,
+            Net::Unified(_)    => Engine::Unified,
+            Net::Nemotron(_)   => Engine::Nemotron,
+            Net::Cohere { .. } => Engine::Cohere,
         }
     }
+
+    /// For A/B benchmarks only: back to raw lengths. Call before `warm_up`.
+    pub fn unbucket(&mut self) { self.pad_to = None; }
+}
+
+/// Who gets the bucket: whole-clip encoders on DirectML. Nemotron already
+/// runs fixed 560 ms chunks (no first-shape trap, padding is pure waste);
+/// Cohere doesn't run on DirectML; CPU doesn't care. Pure.
+pub fn bucket_for(engine: Engine, device: Device) -> Option<usize> {
+    (device == Device::DirectMl && matches!(engine, Engine::Tdt | Engine::Unified)).then_some(GPU_BUCKET_S * SR as usize)
+}
+
+/// The length a clip of `len` samples is fed at. Pure.
+pub fn padded_len(len: usize, pad_to: Option<usize>) -> usize {
+    match pad_to { Some(b) if len < b => b, _ => len }
+}
+
+/// After a load, before anything real: ONNX Runtime does its real setup on
+/// the first inference, and on DirectML that first inference also picks the
+/// fast shape. So: silence, at the bucket length (1 s on CPU).
+pub fn warm_up(model: &mut Model) -> Result<()> {
+    let n = model.pad_to.unwrap_or(SR as usize);
+    transcribe(model, vec![0.0; n]).map(drop)
+}
+
+/// Hotkey's down, a clip is coming: get the GPU's clocks up now instead of
+/// after you let go. One bucket-sized pass on silence. No-op on CPU: we
+/// raced it (16 phrases, 5 s pauses) and priming a CPU is noise, 107 → 90 ms
+/// on one model, 102 → 111 on another, for cycles burned while you talk.
+pub fn prime(model: &mut Model) -> Result<()> {
+    if model.pad_to.is_some() { warm_up(model) } else { Ok(()) }
 }
 
 /// Cohere wants a language and can't detect one. `auto` (or a code it doesn't
@@ -283,41 +340,43 @@ pub fn load_on(dir: &Path, threads: Option<usize>, want: Device, strict: bool, l
     };
     let exec = Some(exec_config(threads, device)?);
     let ctx = |e: parakeet_rs::Error| anyhow!("loading {} on {}: {}", dir.display(), device.label(), explain(device, &e.to_string()));
-    let model = match engine {
-        Engine::Tdt     => Model::Tdt(Box::new(ParakeetTDT::from_pretrained(dir, exec).map_err(ctx)?)),
-        Engine::Unified => Model::Unified(Box::new(ParakeetUnified::from_pretrained(dir, exec).map_err(ctx)?)),
+    let net = match engine {
+        Engine::Tdt     => Net::Tdt(Box::new(ParakeetTDT::from_pretrained(dir, exec).map_err(ctx)?)),
+        Engine::Unified => Net::Unified(Box::new(ParakeetUnified::from_pretrained(dir, exec).map_err(ctx)?)),
         Engine::Nemotron => {
             let mut m = Nemotron::from_pretrained(dir, exec).map_err(ctx)?;
             if m.mode() == NemotronMode::Multilingual && lang != "auto" {
                 // An unknown code isn't worth failing a load over: it just stays on auto.
                 if let Err(e) = m.set_target_lang(nemotron_lang(lang)) { warn!("nemotron: {e}; staying on auto-detect"); }
             }
-            Model::Nemotron(Box::new(m))
+            Net::Nemotron(Box::new(m))
         }
         Engine::Cohere => {
             let m = CohereASR::from_pretrained(dir, exec).map_err(ctx)?;
             let lang = cohere_lang(lang, &m.supported_languages());
             info!("cohere: transcribing as {lang:?} (it can't auto-detect; set Core ▸ language)");
-            Model::Cohere { m: Box::new(m), lang }
+            Net::Cohere { m: Box::new(m), lang }
         }
     };
-    Ok(Loaded { model, device, note })
+    let pad_to = bucket_for(engine, device);
+    Ok(Loaded { model: Model { net, pad_to }, device, note })
 }
 
 /// One clip in, trimmed text out. Empty string = it heard nothing worth typing.
-pub fn transcribe(model: &mut Model, clip: Vec<f32>) -> Result<String> {
+pub fn transcribe(model: &mut Model, mut clip: Vec<f32>) -> Result<String> {
+    clip.resize(padded_len(clip.len(), model.pad_to), 0.0); // trailing silence; see the first-shape trap
     fn go(t: &mut impl Transcriber, clip: Vec<f32>) -> Result<String> {
         t.transcribe_samples(clip, SR, 1, Some(TimestampMode::Sentences))
             .map(|r| r.text.trim().to_owned())
             .map_err(Into::into)
     }
-    match model {
-        Model::Tdt(m)      => go(m.as_mut(), clip),
-        Model::Unified(m)  => go(m.as_mut(), clip),
-        Model::Nemotron(m) => Ok(m.transcribe_audio(&clip)?.trim().to_owned()),
+    match &mut model.net {
+        Net::Tdt(m)      => go(m.as_mut(), clip),
+        Net::Unified(m)  => go(m.as_mut(), clip),
+        Net::Nemotron(m) => Ok(m.transcribe_audio(&clip)?.trim().to_owned()),
         // Trained on ≤35 s clips: cut longer ones in the quiet bits, glue the
         // text back. CJK joins without spaces, like Cohere's reference code.
-        Model::Cohere { m, lang } => {
+        Net::Cohere { m, lang } => {
             let sep = if matches!(lang.as_str(), "ja" | "zh") { "" } else { " " };
             let parts = crate::dsp::split_at_quiet(&clip, 35 * SR as usize, 5 * SR as usize, SR as usize / 10)
                 .into_iter()
@@ -358,7 +417,7 @@ fn bring_up(state: &State, demoted: Option<String>) -> Option<(Model, Device, Pa
             let note = demoted.or(note);
             let load_ms = t0.elapsed().as_millis() as u64;
             let t1 = Instant::now();
-            if let Err(e) = transcribe(&mut m, vec![0.0; SR as usize]) { warn!("warm-up inference failed: {e:#}"); }
+            if let Err(e) = warm_up(&mut m) { warn!("warm-up inference failed: {e:#}"); }
             let warmup_ms = t1.elapsed().as_millis() as u64;
             info!("parakeet up ({:?} on {}): load {load_ms} ms + warm-up {warmup_ms} ms from {shown} ({} threads)",
                 m.engine(), device.label(), threads.map_or("ORT-default".into(), |n| n.to_string()));
@@ -379,10 +438,14 @@ pub fn run(state: &State, clips: &Receiver<Clip>, out: &Sender<Transcript>) -> R
     let mut gen = state.model_gen.load(Ordering::Acquire);
     let mut model = bring_up(state, None);
     let mut cold = true;
+    let mut primed = Instant::now();
 
     while state.alive() {
-        // Wake up regularly to notice a model swap even when nobody's talking.
-        let clip = match clips.recv_timeout(Duration::from_millis(250)) {
+        // Wake up regularly to notice a model swap even when nobody's talking;
+        // often while someone IS talking, to keep a GPU primed (below).
+        let recording = state.mode() == Mode::Recording;
+        let tick = if recording && model.as_ref().is_some_and(|(m, _, _)| m.pad_to.is_some()) { 50 } else { 250 };
+        let clip = match clips.recv_timeout(Duration::from_millis(tick)) {
             Ok(c) => Some(c),
             Err(RecvTimeoutError::Timeout) => None,
             Err(RecvTimeoutError::Disconnected) => break,
@@ -411,6 +474,16 @@ pub fn run(state: &State, clips: &Receiver<Clip>, out: &Sender<Transcript>) -> R
             drop(model.take()); // free the old one first: two 2.5 GB models at once is a choice
             model = bring_up(state, None);
             cold = true;
+        }
+
+        // Hotkey held on a GPU: a pass every ~700 ms keeps the card clocked up,
+        // so release → text doesn't start with a ramp from idle. The first
+        // pass lands within 50 ms of the press.
+        if clip.is_none() && recording && primed.elapsed() >= Duration::from_millis(700) {
+            if let Some((m, _, _)) = model.as_mut() {
+                if let Err(e) = prime(m) { debug!("prime: {e:#}"); }
+                primed = Instant::now();
+            }
         }
 
         let Some(Clip { pcm, sw }) = clip else { continue };
@@ -525,6 +598,24 @@ mod tests {
     fn cpu_and_unknown_errors_pass_through() {
         assert_eq!(explain(Device::Cpu, "bad allocation"), "bad allocation"); // your RAM, not VRAM
         assert_eq!(explain(Device::Cuda, "the model is haunted"), "the model is haunted");
+    }
+
+    #[test]
+    fn short_clips_pad_to_the_bucket_long_ones_dont() {
+        let b = Some(GPU_BUCKET_S * SR as usize);
+        assert_eq!(padded_len(SR as usize, b), GPU_BUCKET_S * SR as usize); // 1 s sentence → bucket
+        assert_eq!(padded_len(0, b), GPU_BUCKET_S * SR as usize);
+        assert_eq!(padded_len(40 * SR as usize, b), 40 * SR as usize);     // monologue: as-is
+        assert_eq!(padded_len(12_345, None), 12_345);                        // CPU: never padded
+    }
+
+    #[test]
+    fn only_whole_clip_encoders_on_directml_get_bucketed() {
+        assert!(bucket_for(Engine::Tdt, Device::DirectMl).is_some());
+        assert!(bucket_for(Engine::Unified, Device::DirectMl).is_some());
+        assert!(bucket_for(Engine::Nemotron, Device::DirectMl).is_none()); // fixed chunks already
+        assert!(bucket_for(Engine::Tdt, Device::Cpu).is_none());
+        assert!(bucket_for(Engine::Tdt, Device::Cuda).is_none());          // unmeasured: don't guess
     }
 
     #[test]

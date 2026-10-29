@@ -161,7 +161,7 @@ pub fn start(state: Arc<State>, take: Arc<Vec<f32>>, reference: String, scope: S
                 let load_ms = perf::ms(t0.elapsed());
 
                 step("warm", 0);
-                asr::transcribe(&mut m, vec![0.0; SR as usize])?;
+                asr::warm_up(&mut m)?;
 
                 let mut times = Vec::with_capacity(RUNS);
                 let mut text = String::new();

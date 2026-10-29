@@ -897,10 +897,10 @@ function engineNote() {
 const SPEED = window.DV_SPEED || null;
 const SP_DEVS = ['cpu', 'directml'];
 const SP_METRICS = [
-  { id: 'idle', name: 'Sentence',     long: 'A 5-second sentence after 5 s of silence. This is push-to-talk as you actually use it.' },
-  { id: 'warm', name: 'Back to back', long: 'The same sentence with no pause, so the GPU never gets to clock down.' },
+  { id: 'idle', name: 'Sentence',     long: 'Eight phrases, 1.3 to 5.2 s, each after 5 s of silence and 2 s of holding the hotkey (when a GPU gets primed). Push-to-talk as you actually use it.' },
+  { id: 'warm', name: 'Back to back', long: 'The same eight phrases with no pause, so a GPU never gets to clock down.' },
   { id: 'long', name: '40 s clip',    long: 'A 40-second monologue. Throughput: where GPUs earn their keep.' },
-  { id: 'cold', name: 'First one',    long: 'The first sentence after the model loads. DirectML compiles kernels for each new input length.' },
+  { id: 'cold', name: 'First one',    long: 'Your first sentence after the model loads and warms up.' },
   { id: 'load', name: 'Load',         long: 'Loading the model from disk, once per start or model swap.' },
 ];
 S.speed = pref.get('dv.speed', 'idle');
@@ -965,6 +965,7 @@ function viewSpeed() {
         ${verdict(r)}
         <span class="sp-wer" title="word error rate on the two built-in clips">${avgWer(r).toFixed(1)}%</span>
       </div>`).join('')}</div>
+      ${when(rig.note, () => `<p class="sp-foot">${esc(rig.note)}</p>`)}
       <div class="tip" id="sp-tip"></div>
     </section>`;
 }

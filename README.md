@@ -222,21 +222,38 @@ clips (warm median, 8 threads vs the 3080):
 | Nemotron EN | 1.7% · 3.8% | 8× | slower |
 | Cohere Transcribe | **1.7% · 2.6%** | 2× | refused: its attention op breaks DirectML |
 
-**But that's throughput.** Push-to-talk is a short sentence after the machine
-sat idle, and an idle GPU has to clock back up. A 5 s sentence after 5 s of
-silence (`bench --first 5 --gap 5000`, p50):
+**But that's throughput.** Push-to-talk is a short sentence after a pause, and
+two things punish a GPU there:
 
-| | CPU | DirectML | |
-|---|---|---|---|
-| Parakeet v3 | 148 ms | **84 ms** | GPU 1.8× |
-| Parakeet Ultra | **130 ms** | 246 ms | CPU 1.9× |
-| Unified · int8 | **123 ms** | 291 ms | CPU 2.4× |
-| Nemotron 3.5 | **760 ms** | 1360 ms | CPU 1.8× |
-| Cohere Transcribe | 5.2 s | — | CPU only |
+1. **DirectML's first-shape trap.** It builds its fast path for the FIRST input
+   length a session runs; every other length takes a ~3× slower path, forever
+   (v3: first run 4 s → every 4 s clip 82 ms, every 8 s clip 250 ms, even four
+   8 s clips in a row). We used to warm up with 1 s of silence, so every real
+   sentence on the GPU was on the slow path. **Fix:** on DirectML the warm-up
+   is a 6 s clip and every shorter phrase is padded with silence to 6 s: one
+   shape, always the fast one. (Same words; at a mid-word cut it even heard
+   "child" where the unpadded run guessed "children".) Nemotron already runs
+   fixed 560 ms chunks, so it's left alone.
+2. **Clocking up after a pause.** **Fix: prime on press.** While you hold the
+   hotkey, the ASR thread runs the bucket on silence every ~700 ms, so the card
+   is awake when you let go. Push-to-talk hands us that head start for free.
+   (Priming a CPU measured as noise, so it doesn't.)
 
-The GPU wins one sentence out of seven models. DirectML numbers jump after the
-pause (Unified int8: 135 ms back to back, 291 ms after idle); CPU numbers don't
-move. The Speed page has all of it.
+v3, eight phrase lengths (1.3–5.2 s), 5 s pauses, 16 phrases (`bench --first
+1.8,3.1,…,5.2 --gap 5000 --press 2000`):
+
+| | p50 | p90 |
+|---|---|---|
+| DirectML, before | 304 ms | 396 ms |
+| + 6 s bucket | 164 ms | 216 ms |
+| **+ prime on press** | **92 ms** | **119 ms** |
+| CPU | 125 ms | 187 ms |
+
+The Speed page has every model measured this way. On this rig v3 on DirectML is
+now the snappiest setup there is; Ultra and Unified still sentence faster on
+the CPU (they're different exports and DirectML likes them less); Nemotron and
+Cohere are CPU jobs. A repeated slice flatters DirectML, which is how our first
+Speed page got v3 right for the wrong reason: real phrases never repeat a length.
 
 Known-bad model × device pairs are refused up front with the reason, and the
 device buttons grey out for the model you have loaded. Every model's ⓘ shows
@@ -282,7 +299,9 @@ Measure your own machine:
 divinevoice bench some-speech.mp3 --thread-scan 1,2,4,6,8,12,16
 divinevoice bench some-speech.mp3 --model parakeet-unified --text   # any model, full transcript
 divinevoice bench --clip 02_leftmost_child --device directml         # same, on the GPU
-divinevoice bench --clip 02_leftmost_child --first 5 --gap 5000 --json   # a sentence after silence, as JSON
+divinevoice bench --clip 02_leftmost_child --first 1.8,3.1,4.6 --gap 5000 --press 2000 --json
+                                       # real phrases: varied lengths, pauses, GPU primed while the key is held
+divinevoice bench … --device directml --no-bucket                    # A/B against the raw-length GPU path
 ```
 
 That prints load, cold and warm timings (p50/p95), real-time factor and scaling

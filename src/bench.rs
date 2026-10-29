@@ -64,6 +64,10 @@ struct Opts {
     /// Sit idle this long before every warm run, like real dictation does
     /// between sentences. This is what lets a GPU clock down.
     gap_ms:    u64,
+    /// The last N ms of each gap are "hotkey held": prime the GPU like the app does.
+    press_ms:  u64,
+    /// A/B: feed raw lengths on DirectML instead of the padded bucket.
+    raw:       bool,
     json:      bool,
 }
 
@@ -73,7 +77,8 @@ const USAGE: &str = "usage: divinevoice bench <audio-file> [--reference script.t
                      \x20      divinevoice bench --clip <id>      (a benchmark clip; graded against its script)\n\
                      \x20  options: --model <dir|catalogue-id>  --iters N  --thread-scan 1,2,4,8  --text\n\
                      \x20           --device cpu|cuda|directml  --lang auto|en|pt|ja…\n\
-                     \x20           --first SECS[,SECS…] (sentence-sized slices, cycled)  --gap MS (idle before each run)  --json";
+                     \x20           --first SECS[,SECS…] (sentence-sized slices, cycled)  --gap MS (idle before each run)  --json\n\
+                     \x20           --press MS (end of each gap = hotkey held: prime the GPU)  --no-bucket (A/B)";
 
 pub fn run(args: &[String], cfg: &Config) -> Result<()> {
     let o = parse(args, cfg)?;
@@ -132,6 +137,7 @@ fn parse(args: &[String], cfg: &Config) -> Result<Opts> {
     let mut device = cfg.device;
     let mut lang = cfg.language.clone();
     let (mut first, mut gap_ms, mut json) = (Vec::new(), 0, false);
+    let (mut press_ms, mut raw) = (0, false);
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut val = |flag: &str| it.next().ok_or_else(|| anyhow!("{flag} needs a value"));
@@ -155,6 +161,8 @@ fn parse(args: &[String], cfg: &Config) -> Result<Opts> {
                 .context("--first wants seconds, e.g. 5 or 1.8,3.1,4.6")?,
             "--gap"    => gap_ms = val("--gap")?.parse().context("--gap wants milliseconds")?,
             "--json"   => json = true,
+            "--press"  => press_ms = val("--press")?.parse().context("--press wants milliseconds")?,
+            "--no-bucket" => raw = true,
             "--device" | "-d" => device = val("--device").and_then(|v| Device::ALL.into_iter()
                 .find(|d| d.label() == v.to_ascii_lowercase())
                 .ok_or_else(|| anyhow!("--device wants cpu, cuda or directml, got {v:?}")))?,
@@ -176,7 +184,7 @@ fn parse(args: &[String], cfg: &Config) -> Result<Opts> {
         }
     };
     if threads.is_empty() { bail!("--thread-scan needs at least one number"); }
-    Ok(Opts { input, reference, model, iters: iters.max(1), threads, text, device, lang, first, gap_ms, json })
+    Ok(Opts { input, reference, model, iters: iters.max(1), threads, text, device, lang, first, gap_ms, press_ms, raw, json })
 }
 
 /// "  wer   2.1%  (2/97)  steel→steal · −who · +the"
@@ -204,7 +212,11 @@ fn ms_of<T>(f: impl FnOnce() -> T) -> (T, u128) {
 fn bench_one(threads: Option<usize>, o: &Opts, takes: &[Vec<f32>], script: Option<&str>) -> Result<Run> {
     let (model, load_ms) = ms_of(|| asr::load_on(&o.model, threads, o.device, true, &o.lang));
     let mut model = model?.model;
+    if o.raw { model.unbucket(); }
     println!("  load  {load_ms} ms");
+    // Same as the app: silence first (on DirectML that picks the fast shape),
+    // so "cold" below is your first real sentence, not ORT's setup.
+    asr::warm_up(&mut model)?;
 
     let (text, cold_ms) = ms_of(|| asr::transcribe(&mut model, takes[0].clone()));
     let text = text?;
@@ -215,7 +227,15 @@ fn bench_one(threads: Option<usize>, o: &Opts, takes: &[Vec<f32>], script: Optio
     let iters = o.iters;
     let warm_ms = (1..=iters)
         .map(|n| {
-            if o.gap_ms > 0 { std::thread::sleep(std::time::Duration::from_millis(o.gap_ms)); }
+            let press = o.press_ms.min(o.gap_ms);
+            std::thread::sleep(std::time::Duration::from_millis(o.gap_ms - press));
+            // "Hotkey held": prime every 700 ms, exactly like asr::run does.
+            let held = Instant::now();
+            while held.elapsed().as_millis() < press as u128 {
+                let _ = asr::prime(&mut model);
+                std::thread::sleep(std::time::Duration::from_millis(700).min(
+                    std::time::Duration::from_millis(press).saturating_sub(held.elapsed())));
+            }
             let (r, ms) = ms_of(|| asr::transcribe(&mut model, takes[n % takes.len()].clone()));
             print!("\r  warm  {n}/{iters}  {ms} ms   ");
             let _ = std::io::stdout().flush();
@@ -259,7 +279,7 @@ fn print_json(r: &Run, o: &Opts, secs: f64) {
     let s = stats(&r.warm_ms);
     println!("{}", serde_json::json!({
         "model": crate::models::which(&o.model).map_or("custom", |m| m.id), "device": o.device,
-        "audio_s": secs, "gap_ms": o.gap_ms, "threads": r.threads,
+        "audio_s": secs, "gap_ms": o.gap_ms, "press_ms": o.press_ms, "bucket": !o.raw, "threads": r.threads,
         "load_ms": r.load_ms, "cold_ms": r.cold_ms,
         "p50_ms": s.p50, "mean_ms": s.mean, "min_ms": s.min, "max_ms": s.max, "xrt": rtf(secs, s.mean),
     }));
