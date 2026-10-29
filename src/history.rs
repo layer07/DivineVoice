@@ -2,7 +2,7 @@
 /*
  * history.rs
  *
- * Version: @(#)history.rs 0.3.1 2026
+ * Version: @(#)history.rs 0.3.2 2026
  *
  * Description: The Memory Stone.
  *              Last N things you said, only if you asked. Off by default:

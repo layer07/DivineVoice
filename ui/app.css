@@ -2,7 +2,7 @@
 /*
  * app.css
  *
- * Version: @(#)app.css 0.3.1 2026
+ * Version: @(#)app.css 0.3.2 2026
  *
  * Description: The Corpo-Doom Skin.
  *              Every colour from theme.css. Typing a hex code here? You doing it
@@ -417,6 +417,7 @@ kbd {
 .pill.warn { background: var(--io-warning-subtle); color: var(--io-warning); box-shadow: none; border: 1px solid var(--io-warning-dim); }
 .pill.err  { background: var(--io-error-subtle);   color: var(--io-error);   box-shadow: none; border: 1px solid var(--io-error-dim); }
 .pill.off  { background: transparent; color: var(--io-text-tertiary); box-shadow: none; border: 1px solid var(--io-border); }
+.pill.err  { background: var(--io-error-subtle); color: var(--io-error); box-shadow: none; border: 1px solid var(--io-error-dim); }
 
 .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--io-text-disabled); }
 .dot.ok   { background: var(--io-success); box-shadow: 0 0 8px var(--io-success); }

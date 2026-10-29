@@ -2,7 +2,7 @@
 /*
  * binding.rs
  *
- * Version: @(#)binding.rs 0.3.1 2026
+ * Version: @(#)binding.rs 0.3.2 2026
  *
  * Description: The Hotkey, As Data.
  *              "Ctrl+Shift+F13" in, (mods, VK) out, and back again. Pure. No

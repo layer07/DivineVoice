@@ -2,7 +2,7 @@
 /*
  * main.rs
  *
- * Version: @(#)main.rs 0.3.1 2026
+ * Version: @(#)main.rs 0.3.2 2026
  *
  * Description: The Cave Entrance.
  *              Five threads and a tray. Hotkey hear finger. Audio hear mouth.

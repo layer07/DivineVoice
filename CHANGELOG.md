@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.2 · 2026-10-29
+
+- **Driver off reads as off.** Without the Interception driver, Type mode's
+  pill turns red with an *install it →* link (steps in the tooltip). Nothing
+  else needs it: Paste is the default and the app runs fine without it.
+- Core ▸ Engine says *No model yet: pick one →* instead of "on missing".
+
 ## 0.3.1 · 2026-10-29
 
 - **Fix: fresh installs couldn't download the default model.** The config

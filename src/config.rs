@@ -2,7 +2,7 @@
 /*
  * config.rs
  *
- * Version: @(#)config.rs 0.3.1 2026
+ * Version: @(#)config.rs 0.3.2 2026
  *
  * Description: The One File Humans Touch.
  *              config.toml in %APPDATA%. Every key has a default, so half a file

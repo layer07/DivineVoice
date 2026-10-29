@@ -2,7 +2,7 @@
 /*
  * tray.rs
  *
- * Version: @(#)tray.rs 0.3.1 2026
+ * Version: @(#)tray.rs 0.3.2 2026
  *
  * Description: The Little Light.
  *              Four colour tiles, one per mode. Left click open Settings. Right

@@ -2,7 +2,7 @@
 /*
  * state.rs
  *
- * Version: @(#)state.rs 0.3.1 2026
+ * Version: @(#)state.rs 0.3.2 2026
  *
  * Description: The Shared Truth.
  *              One byte say what the pipeline doing. Every hop is compare-and-

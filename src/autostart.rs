@@ -2,7 +2,7 @@
 /*
  * autostart.rs
  *
- * Version: @(#)autostart.rs 0.3.1 2026
+ * Version: @(#)autostart.rs 0.3.2 2026
  *
  * Description: The Alarm Clock.
  *              One string under HKCU\...\CurrentVersion\Run. The registry is

@@ -2,7 +2,7 @@
 /*
  * build.rs
  *
- * Version: @(#)build.rs 0.3.1 2026
+ * Version: @(#)build.rs 0.3.2 2026
  *
  * Description: The Build Script.
  *              Bake icon into PE. Then walk bench/, pair every clip with its

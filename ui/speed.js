@@ -2,7 +2,7 @@
 /*
  * speed.js
  *
- * Version: @(#)speed.js 0.3.1 2026
+ * Version: @(#)speed.js 0.3.2 2026
  *
  * Description: The Lab Notebook.
  *              Reference numbers from one rig, so you know CPU vs GPU and

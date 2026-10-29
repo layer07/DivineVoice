@@ -2,7 +2,7 @@
 /*
  * themes.js
  *
- * Version: @(#)themes.js 0.3.1 2026
+ * Version: @(#)themes.js 0.3.2 2026
  *
  * Description: The Paint Shop.
  *              Forty skins from the PulseForum ElectricWizard theme system,

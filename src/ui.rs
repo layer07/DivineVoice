@@ -2,7 +2,7 @@
 /*
  * ui.rs
  *
- * Version: @(#)ui.rs 0.3.1 2026
+ * Version: @(#)ui.rs 0.3.2 2026
  *
  * Description: The Main Thread.
  *              tao event loop, tray, frameless WebView2 Settings that exist only

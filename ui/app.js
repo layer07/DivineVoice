@@ -2,7 +2,7 @@
 /*
  * app.js
  *
- * Version: @(#)app.js 0.3.1 2026
+ * Version: @(#)app.js 0.3.2 2026
  *
  * Description: The Settings Page Brain.
  *              No framework. View is pure function: state in, HTML out. One
@@ -146,6 +146,12 @@ const langHint = () => ({
 }[activeEngine()] || '');
 const activeEngine = () => S.snap.models.find((x) => x.id === S.snap.active_model)?.engine;
 
+/// Optional, third-party, a kernel driver: your call to install, so a link and
+/// the three steps, not a bundle. Everything else works without it.
+const INTERCEPTION_URL = 'https://github.com/oblitum/Interception/releases';
+const driverLink = () => `<a class="link" data-act="url" data-url="${INTERCEPTION_URL}"
+  title="1. Download Interception, run install-interception.exe /install as admin&#10;2. Reboot&#10;3. Put library\\x64\\interception.dll next to divinevoice.exe">install it →</a>`;
+
 const MODE_TEXT = {
   idle: 'Standing by',
   recording: 'Recording',
@@ -253,8 +259,8 @@ function viewGeneral() {
     const hidOff = o.hid && !S.snap.interception;
     return `<button class="tile ${c.inject_mode === o.id ? 'on' : ''}" data-act="set" data-k="inject_mode" data-v="${o.id}">
       <span class="radio"></span>
-      <span class="t-name">${esc(o.name)}${when(o.hid, hidOff ? '<span class="pill off">driver off</span>' : '<span class="pill ok">driver on</span>')}</span>
-      <span class="t-how">${esc(o.how)}${when(hidOff, ' Without the driver it falls back to Unicode.')}</span>
+      <span class="t-name">${esc(o.name)}${when(o.hid, hidOff ? '<span class="pill err">driver off</span>' : '<span class="pill ok">driver on</span>')}</span>
+      <span class="t-how">${esc(o.how)}${when(hidOff, () => ` Without the driver it falls back to Unicode. ${driverLink()}`)}</span>
       <span class="t-tags">${o.tags.map((t) => `<span class="chip">${t}</span>`).join('')}</span>
     </button>`;
   }).join('');
@@ -296,7 +302,9 @@ function engineCard() {
     <div class="row" style="flex-wrap:nowrap">
       <div style="flex:1;min-width:0">
         <h2 style="margin:0">Engine</h2>
-        <p class="desc" style="margin:2px 0 0">${esc(activeModelName())} on ${where}</p>
+        <p class="desc" style="margin:2px 0 0">${m.state === 'missing'
+          ? 'No model yet: <a class="link" data-act="page" data-page="models">pick one →</a>'
+          : `${esc(activeModelName())} on ${where}`}</p>
       </div>
       <div class="seg" aria-label="device">${segs}</div>
       <span title="${esc(langHint())}">${select('language', langs, 'width:150px')}</span>
@@ -1012,7 +1020,7 @@ function viewAdvanced() {
         ${num('intra_threads', c.intra_threads, 'threads', '0 = ORT guesses · change reloads the model', 0, 64)}
       </section>
       <section class="card">
-        <h2>Interception ${S.snap.interception ? '<span class="pill ok">driver on</span>' : '<span class="pill off">driver off</span>'}</h2>
+        <h2>Interception ${S.snap.interception ? '<span class="pill ok">driver on</span>' : `<span class="pill err">driver off</span> ${driverLink()}`}</h2>
         <p class="desc">Hardware IDs Type must never inject through, one per line (your KVM's own HID gadget).</p>
         <textarea data-key="skip_hwids" data-lines rows="3" placeholder="VID_1209&amp;PID_4B4D">${esc(c.skip_hwids.join('\n'))}</textarea>
       </section>

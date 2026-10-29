@@ -2,7 +2,7 @@
 /*
  * ipc.rs
  *
- * Version: @(#)ipc.rs 0.3.1 2026
+ * Version: @(#)ipc.rs 0.3.2 2026
  *
  * Description: The Settings Switchboard.
  *              Page send JSON, Rust answer JSON. Config write is one trick:
