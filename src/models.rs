@@ -322,6 +322,20 @@ pub fn which(dir: &Path) -> Option<&'static Spec> {
 
 fn part(dir: &Path, file: &str) -> PathBuf { dir.join(format!("{file}.part")) }
 
+/// Where to pick a file back up, given its .part length. Pure.
+///   None     the .part is whole: a past run got every byte, then the rename
+///            failed (an AV scanner sitting on a 2.4 GB file). Asking for
+///            `bytes=<size>-` gets a 416 forever, so just finish the rename.
+///   Some(0)  nothing yet, or longer than the file can be (junk): from scratch
+///   Some(n)  resume at n
+fn resume_at(part_len: u64, size: u64) -> Option<u64> {
+    match part_len {
+        n if n == size => None,
+        n if n > size => Some(0),
+        n => Some(n),
+    }
+}
+
 /// Download everything `spec` needs. Resumes .part files with HTTP Range,
 /// verifies sizes, renames into place. `progress(done, total)` fires at most
 /// ~10×/s. Set `cancel` and it bails within one 256 KiB chunk.
@@ -341,7 +355,11 @@ pub fn download(spec: &Spec, cancel: &AtomicBool, progress: impl Fn(u64, u64)) -
         }
 
         let tmp = part(&dir, file);
-        let have = fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0).min(size);
+        let Some(have) = resume_at(fs::metadata(&tmp).map_or(0, |m| m.len()), size) else {
+            fs::rename(&tmp, &final_path).map_err(|e| anyhow!("rename {}: {e}", tmp.display()))?;
+            done_before += size;
+            continue;
+        };
         let url = format!("https://huggingface.co/{}/resolve/main/{}{file}", spec.repo, spec.sub);
         info!("models: {file} ← {url} (resume at {have})");
 
@@ -446,5 +464,13 @@ mod tests {
         let shouty = PathBuf::from(format!("{}\\", d.to_string_lossy().to_uppercase()));
         assert_eq!(which(&shouty).map(|s| s.id), Some(CATALOGUE[1].id));
         assert!(which(Path::new(r"A:\elsewhere")).is_none());
+    }
+
+    #[test]
+    fn whole_part_finishes_instead_of_asking_for_nothing() {
+        assert_eq!(resume_at(0, 100), Some(0));
+        assert_eq!(resume_at(40, 100), Some(40));
+        assert_eq!(resume_at(100, 100), None);   // rename failed last time: 416 trap
+        assert_eq!(resume_at(150, 100), Some(0)); // junk: start over
     }
 }
