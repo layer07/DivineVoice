@@ -159,13 +159,18 @@ impl State {
 
     /// `from → to` iff we're still in `from`. Returns whether we won.
     pub fn advance(&self, from: Mode, to: Mode) -> bool {
-        self.mode
+        let changed = self.mode
             .compare_exchange(from as u8, to as u8, Ordering::AcqRel, Ordering::Acquire)
-            .is_ok()
+            .is_ok();
+        if changed { crate::ui::push_state(); }
+        changed
     }
 
     /// Unconditional. Recording start, watchdog, supervisor. Nobody else.
-    pub fn force(&self, m: Mode) { self.mode.store(m as u8, Ordering::Release) }
+    pub fn force(&self, m: Mode) {
+        self.mode.store(m as u8, Ordering::Release);
+        crate::ui::push_state();
+    }
 
     pub fn input_device(&self) -> Option<String> { self.cfg.read().input_device.clone() }
 

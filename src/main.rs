@@ -47,16 +47,33 @@
 
 mod asr;
 mod audio;
+#[cfg(target_os = "windows")]
+mod autostart;
+#[cfg(not(target_os = "windows"))]
+#[path = "autostart_macos.rs"]
 mod autostart;
 mod bench;
 mod binding;
+#[cfg(target_os = "windows")]
+mod bus;
+#[cfg(not(target_os = "windows"))]
+#[path = "bus_macos.rs"]
 mod bus;
 mod clips;
 mod config;
 mod dsp;
 mod history;
+#[cfg(target_os = "windows")]
 mod hotkey;
+#[cfg(not(target_os = "windows"))]
+#[path = "hotkey_macos.rs"]
+mod hotkey;
+#[cfg(target_os = "windows")]
 mod inject;
+#[cfg(not(target_os = "windows"))]
+#[path = "inject_macos.rs"]
+mod inject;
+#[cfg(target_os = "windows")]
 mod interception;
 mod ipc;
 mod keymap;
@@ -294,6 +311,7 @@ fn init_logging(level: &str) -> Option<tracing_appender::non_blocking::WorkerGua
     guard
 }
 
+#[cfg(target_os = "windows")]
 mod win {
     use windows::core::w;
     use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS, HANDLE};
@@ -313,4 +331,14 @@ mod win {
             (GetLastError() != ERROR_ALREADY_EXISTS).then_some(h)
         }
     }
+}
+
+#[cfg(not(target_os = "windows"))]
+mod win {
+    pub fn attach_parent_console() {}
+
+    /// Platform-neutral single-instance support arrives with the native macOS
+    /// adapter. Returning a token keeps startup behaviour deterministic until
+    /// then without importing Windows mutex APIs.
+    pub fn single_instance() -> Option<()> { Some(()) }
 }

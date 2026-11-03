@@ -233,7 +233,10 @@ fn build_settings(
     ctx: &mut WebContext,
     proxy: EventLoopProxy<UserEvent>,
 ) -> Result<Settings> {
+    #[cfg(target_os = "windows")]
     use tao::platform::windows::WindowBuilderExtWindows;
+    #[cfg(target_os = "macos")]
+    use tao::platform::macos::WindowBuilderExtMacOS;
     // Frameless, fixed, no maximise. The titlebar is ours (ui/index.html);
     // the native shadow stays so it doesn't look like a sticker on the desktop.
     let window = WindowBuilder::new()
@@ -241,8 +244,12 @@ fn build_settings(
         .with_inner_size(tao::dpi::LogicalSize::new(WIN_W, WIN_H))
         .with_resizable(false)
         .with_maximizable(false)
-        .with_decorations(false)
-        .with_undecorated_shadow(true)
+        .with_decorations(false);
+    #[cfg(target_os = "windows")]
+    let window = window.with_undecorated_shadow(true);
+    #[cfg(target_os = "macos")]
+    let window = window.with_has_shadow(true);
+    let window = window
         .with_theme(Some(Theme::Dark))
         .with_background_color((10, 10, 10, 255))
         .with_window_icon(Icon::from_rgba(tray::rgba(Mode::Idle), 32, 32).ok())
