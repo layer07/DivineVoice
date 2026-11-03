@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.4.0 · 2026-11-03
+
+**Linux. And a Mac port from outside.**
+
+- **Linux** (X11, Wayland, even a TTY). Built and tested natively on Arch:
+  - **Hotkey** read straight from `/dev/input`, so it works under any
+    compositor. It hears keys but can't swallow them (that would mean grabbing
+    the whole keyboard), so bind a key that does nothing on its own: F13–F24,
+    Pause, a lone RCtrl.
+  - **Paste and Type** through a uinput virtual keyboard. Unicode mode falls
+    back to Paste. If nothing can type, the transcript waits on your clipboard.
+  - Config in `~/.config/DivineVoice`, models and logs in
+    `~/.local/share/DivineVoice`. Settings window on WebKitGTK, tray via
+    AppIndicator, *Start with Windows* via `~/.config/autostart`.
+  - CPU only for now. Same accuracy as Windows (Unified int8: AlterMann 3.4%,
+    Leftmost 3.8% WER), 23–25× real-time on a Ryzen 7 5825U.
+  - Needs the `input` group. Build steps in the README.
+- **macOS port**, contributed by Pedro Almeida: Core Graphics hotkey,
+  pasteboard + Command+V, and `scripts/package-macos.sh` builds a signed
+  `DivineVoice.app` for local use.
+- **Fix: a stalled model download could never finish.** If every byte arrived
+  but the final rename failed (an antivirus holding a 2.4 GB file), every retry
+  failed with HTTP 416 until you deleted the `.part` by hand. Now it just
+  finishes the rename.
+- **Fix: raising the max recording length cut long takes short.** The
+  watchdog kept the old limit until restart and flipped the tray to idle
+  while you were still talking.
+- Under the hood: the hotkey's decision logic (`chord.rs`) is shared by
+  Windows and Linux, same code, same tests. Each OS only decodes its own key
+  events.
+
 ## 0.3.2 · 2026-10-29
 
 - **Driver off reads as off.** Without the Interception driver, Type mode's

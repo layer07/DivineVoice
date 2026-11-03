@@ -2,7 +2,7 @@
 /*
  * interception.rs
  *
- * Version: @(#)interception.rs 0.3.2 2026
+ * Version: @(#)interception.rs 0.4.0 2026
  *
  * Description: The Hand-Rolled Driver Bridge.
  *              LoadLibrary, four GetProcAddress, done. No import lib: crate

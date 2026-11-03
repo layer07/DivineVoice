@@ -2,7 +2,7 @@
 /*
  * autostart_linux.rs
  *
- * Version: @(#)autostart_linux.rs 0.3.2 2026
+ * Version: @(#)autostart_linux.rs 0.4.0 2026
  *
  * Description: The Alarm Clock On The Penguin.
  *              One .desktop file in ~/.config/autostart. Desktop read it at
