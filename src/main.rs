@@ -5,7 +5,7 @@
  * Version: @(#)main.rs 0.3.2 2026
  *
  * Description: The Cave Entrance.
- *              Five threads and a tray. Hotkey hear finger. Audio hear mouth.
+ *              Six threads and a tray. Hotkey hear finger. Audio hear mouth.
  *              Parakeet hear audio. Inject put words in cursor. Supervisor watch
  *              them all: thread die, thread come back. Window close, app no die.
  *              App live in tray, like bat in cave.
@@ -25,7 +25,7 @@
  *           ░  ░     ░  ░░ ░        ░  ░   ░
  */
 
-//  Five threads and a tray, wired with channels. Each stage owns exactly one
+//  Six threads and a tray, wired with channels. Each stage owns exactly one
 //  job and one mode transition; nobody shares mutable anything except the
 //  config (RwLock) and the mode byte (CAS — see state.rs).
 //
