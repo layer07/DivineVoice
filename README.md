@@ -38,7 +38,7 @@ driver 580+, cuDNN 9, and `DivineVoice-x.y.z-win64-cuda.zip` unzipped next to th
 `DivineVoice-x.y.z-linux-x86_64.tar.gz`, then:
 
 ```bash
-sudo apt install libwebkit2gtk-4.1-0 libayatana-appindicator3-1   # Arch: webkit2gtk-4.1 libayatana-appindicator
+sudo apt install libwebkit2gtk-4.1-0 libayatana-appindicator3-1 libasound2t64   # Arch: webkit2gtk-4.1 libayatana-appindicator alsa-lib
 sudo usermod -aG input "$USER"                                     # then log out and back in
 tar xzf DivineVoice-*-linux-x86_64.tar.gz && ./DivineVoice/divinevoice
 ```
