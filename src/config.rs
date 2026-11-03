@@ -233,6 +233,12 @@ impl Config {
 pub fn home() -> PathBuf {
     std::env::var_os("APPDATA")
         .map(PathBuf::from)
+        .or_else(|| {
+            #[cfg(target_os = "macos")]
+            { std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Library/Application Support")) }
+            #[cfg(not(target_os = "macos"))]
+            { None }
+        })
         .unwrap_or_else(|| PathBuf::from("."))
         .join(APP)
 }

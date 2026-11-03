@@ -756,6 +756,8 @@ version = "0.3.2"
 dependencies = [
  "anyhow",
  "arboard",
+ "core-foundation",
+ "core-graphics",
  "cpal",
  "crossbeam-channel",
  "parakeet-rs",
