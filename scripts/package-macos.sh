@@ -4,6 +4,9 @@ set -euo pipefail
 profile=release
 if [[ "${1:-}" == "--debug" ]]; then
   profile=debug
+elif [[ $# -ne 0 ]]; then
+  echo "usage: $0 [--debug]" >&2
+  exit 2
 fi
 
 case "$(uname -s)" in
@@ -18,30 +21,32 @@ contents="$app/Contents"
 resources="$contents/Resources"
 macos="$contents/MacOS"
 iconset="$target/AppIcon.iconset"
+version=$(awk -F '"' '/^version[[:space:]]*=/{print $2; exit}' "$root/Cargo.toml")
 
 if [[ "$profile" == release ]]; then
-  cargo build --release --no-default-features
+  # ONNX Runtime's static CoreML provider is not compatible with thin LTO on
+  # the Apple Silicon toolchain. This remains an optimized release build.
+  CARGO_PROFILE_RELEASE_LTO=false cargo build --release --no-default-features
 else
   cargo build --no-default-features
 fi
 
 rm -rf "$app" "$iconset"
-mkdir -p "$resources" "$macos" "$iconset"
+mkdir -p "$resources" "$macos"
 
-# The repository supplies a 256 px ICO. macOS accepts the generated ICNS for
-# local testing; replace it with a 1024 px source before a public release.
-sips -s format png "$root/icons/app.ico" --out "$iconset/icon_256x256.png" >/dev/null
-sips -z 16 16   "$iconset/icon_256x256.png" --out "$iconset/icon_16x16.png" >/dev/null
-sips -z 32 32   "$iconset/icon_256x256.png" --out "$iconset/icon_16x16@2x.png" >/dev/null
-sips -z 32 32   "$iconset/icon_256x256.png" --out "$iconset/icon_32x32.png" >/dev/null
-sips -z 64 64   "$iconset/icon_256x256.png" --out "$iconset/icon_32x32@2x.png" >/dev/null
-sips -z 128 128 "$iconset/icon_256x256.png" --out "$iconset/icon_128x128.png" >/dev/null
-sips -z 256 256 "$iconset/icon_256x256.png" --out "$iconset/icon_128x128@2x.png" >/dev/null
-sips -z 256 256 "$iconset/icon_256x256.png" --out "$iconset/icon_256x256@2x.png" >/dev/null
-iconutil -c icns "$iconset" -o "$resources/AppIcon.icns"
+# sips can convert the repository's ICO directly. A larger source asset will
+# improve the result but is not required for an installable app bundle.
+sips -s format icns "$root/icons/app.ico" --out "$resources/AppIcon.icns" >/dev/null
 
 cp "$target/divinevoice" "$macos/divinevoice"
 cp "$root/packaging/macos/Info.plist" "$contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $version" "$contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $version" "$contents/Info.plist"
 
-codesign --force --sign - "$app" >/dev/null
+if [[ -n "${MACOS_SIGN_IDENTITY:-}" ]]; then
+  codesign --force --options runtime --timestamp --sign "$MACOS_SIGN_IDENTITY" "$app" >/dev/null
+else
+  codesign --force --sign - "$app" >/dev/null
+fi
+codesign --verify --deep --strict "$app"
 echo "$app"
