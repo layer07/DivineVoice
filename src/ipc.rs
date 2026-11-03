@@ -246,7 +246,7 @@ fn dispatch(state: &Arc<State>, cmd: &str, m: &Value) -> Result<Vec<String>> {
         "url" => {
             let u = str_arg("url")?;
             if !u.starts_with("https://") { bail!("only https links"); }
-            let _ = std::process::Command::new("explorer.exe").arg(u).spawn();
+            let _ = std::process::Command::new(OPENER).arg(u).spawn();
             vec![]
         }
 
@@ -368,8 +368,17 @@ pub fn on_learned(l: Learned) {
     ui::push("learned", &payload);
 }
 
+/// The desktop's "open this": a folder in the file manager, a link in the browser.
+#[cfg(target_os = "windows")]
+const OPENER: &str = "explorer.exe";
+#[cfg(target_os = "macos")]
+const OPENER: &str = "open";
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+const OPENER: &str = "xdg-open";
+
 pub fn open_path(p: &Path) {
-    let prog = if p.is_file() { "notepad.exe" } else { "explorer.exe" };
+    // explorer.exe on a .toml asks which app; Notepad is always there.
+    let prog = if cfg!(windows) && p.is_file() { "notepad.exe" } else { OPENER };
     let _ = std::process::Command::new(prog).arg(p).spawn();
 }
 
@@ -383,7 +392,9 @@ mod tests {
     fn settings_roundtrip_through_ipc() {
         let tmp = std::env::temp_dir().join(format!("dv-ipc-test-{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
-        std::env::set_var("APPDATA", &tmp);
+        std::env::set_var("APPDATA", &tmp);         // Windows, macOS
+        std::env::set_var("XDG_DATA_HOME", &tmp);   // Linux: home()
+        std::env::set_var("XDG_CONFIG_HOME", &tmp); // Linux: config.toml
         let st = Arc::new(State::new(Config::default()));
         let call = |j: Value| handle(&st, &j.to_string());
         let is_err = |out: &[String]| out.iter().any(|s| s.contains(r#""kind":"error""#));

@@ -80,6 +80,13 @@ features = [
 core-foundation = "0.10"
 core-graphics = "0.25"
 
+# Linux: evdev + uinput are a handful of syscalls and ioctls, so libc, not a
+# crate per device type. arboard needs its Wayland backend (wlr data-control:
+# Hyprland, Sway, KDE); without it, it's X11/XWayland only.
+[target.'cfg(target_os = "linux")'.dependencies]
+libc    = "0.2"
+arboard = { version = "3", features = ["wayland-data-control"] }
+
 [build-dependencies]
 winresource = "0.1"
 

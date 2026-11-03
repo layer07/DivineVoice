@@ -201,7 +201,7 @@ pub enum Loaded {
 }
 
 impl Config {
-    pub fn path() -> PathBuf { home().join("config.toml") }
+    pub fn path() -> PathBuf { config_dir().join("config.toml") }
 
     pub fn load() -> (Self, Loaded) {
         let p = Self::path();
@@ -229,18 +229,43 @@ impl Config {
     pub fn threads(&self) -> Option<usize> { Some(self.intra_threads).filter(|&n| n > 0) }
 }
 
-/// %APPDATA%\DivineVoice. Config, log, and (by default) the model live here.
+/// The app's folder: logs, history, perf, models, the WebView's cache.
+///   Windows  %APPDATA%\DivineVoice (config.toml too)
+///   macOS    ~/Library/Application Support/DivineVoice (config.toml too)
+///   Linux    $XDG_DATA_HOME/DivineVoice, i.e. ~/.local/share: 2.5 GB of model
+///            is data, not config. config.toml goes to config_dir().
 pub fn home() -> PathBuf {
-    std::env::var_os("APPDATA")
-        .map(PathBuf::from)
-        .or_else(|| {
-            #[cfg(target_os = "macos")]
-            { std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Library/Application Support")) }
-            #[cfg(not(target_os = "macos"))]
-            { None }
-        })
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(APP)
+    #[cfg(target_os = "linux")]
+    let base = xdg(env("XDG_DATA_HOME"), env("HOME"), ".local/share");
+    #[cfg(not(target_os = "linux"))]
+    let base = env("APPDATA").or_else(|| {
+        #[cfg(target_os = "macos")]
+        { env("HOME").map(|home| home.join("Library/Application Support")) }
+        #[cfg(not(target_os = "macos"))]
+        { None }
+    });
+    base.unwrap_or_else(|| PathBuf::from(".")).join(APP)
+}
+
+/// Where config.toml lives. Same as home() except on Linux, where it's
+/// $XDG_CONFIG_HOME/DivineVoice (~/.config): the one file humans touch goes
+/// where humans look.
+pub fn config_dir() -> PathBuf {
+    #[cfg(target_os = "linux")]
+    { xdg(env("XDG_CONFIG_HOME"), env("HOME"), ".config").unwrap_or_else(|| PathBuf::from(".")).join(APP) }
+    #[cfg(not(target_os = "linux"))]
+    { home() }
+}
+
+/// An env var as a path; set-but-empty counts as unset, as the XDG spec says.
+fn env(key: &str) -> Option<PathBuf> {
+    std::env::var_os(key).filter(|v| !v.is_empty()).map(PathBuf::from)
+}
+
+/// The XDG rule: $XDG_*_HOME if set and absolute, else $HOME/<fallback>. Pure.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn xdg(set: Option<PathBuf>, home: Option<PathBuf>, fallback: &str) -> Option<PathBuf> {
+    set.filter(|p| p.is_absolute()).or_else(|| home.map(|h| h.join(fallback)))
 }
 
 /// First of: `<exe dir>\model`, then each Models-page download, that holds a
@@ -314,5 +339,16 @@ mod tests {
         let back: Config = toml::from_str(&toml::to_string_pretty(&c).unwrap()).unwrap();
         assert_eq!(back.inject_mode, c.inject_mode);
         assert_eq!(back.max_ms, c.max_ms);
+    }
+
+    #[test]
+    fn xdg_dirs_follow_the_spec() {
+        let home = Some(PathBuf::from("/home/nuc"));
+        let abs = if cfg!(windows) { r"C:\data" } else { "/data" };
+        assert_eq!(xdg(None, home.clone(), ".local/share"), Some(PathBuf::from("/home/nuc/.local/share")));
+        assert_eq!(xdg(Some(PathBuf::from(abs)), home.clone(), ".local/share"), Some(PathBuf::from(abs)));
+        // relative $XDG_* is invalid per the spec: ignored
+        assert_eq!(xdg(Some(PathBuf::from("data")), home.clone(), ".config"), Some(PathBuf::from("/home/nuc/.config")));
+        assert_eq!(xdg(None, None, ".config"), None);
     }
 }

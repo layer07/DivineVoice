@@ -256,7 +256,7 @@ fn build_settings(
         .build(target)?;
 
     let ipc_proxy = Mutex::new(proxy);
-    let view = WebViewBuilder::new_with_web_context(ctx)
+    let builder = WebViewBuilder::new_with_web_context(ctx)
         .with_custom_protocol("dv".into(), |_id, req| serve(&req))
         .with_ipc_handler(move |req: Request<String>| {
             let _ = ipc_proxy.lock().send_event(UserEvent::Ipc(req.into_body()));
@@ -268,8 +268,19 @@ fn build_settings(
             if matches!(ev, wry::PageLoadEvent::Started) { "loading" } else { "loaded" }))
         .with_background_color((10, 10, 10, 255))
         .with_devtools(cfg!(debug_assertions))
-        .with_url("dv://localhost/")
-        .build(&window)?;
+        .with_url("dv://localhost/");
+
+    // Linux: WebKitGTK goes inside tao's GTK box. `build(&window)` there only
+    // knows X11 child windows, and Wayland is where people live now.
+    #[cfg(target_os = "linux")]
+    let view = {
+        use tao::platform::unix::WindowExtUnix;
+        use wry::WebViewBuilderExtUnix;
+        let vbox = window.default_vbox().ok_or_else(|| anyhow::anyhow!("tao window has no GTK box"))?;
+        builder.build_gtk(vbox)?
+    };
+    #[cfg(not(target_os = "linux"))]
+    let view = builder.build(&window)?;
 
     Ok(Settings { window, view })
 }

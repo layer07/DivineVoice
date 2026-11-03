@@ -34,8 +34,10 @@ pub mod sc {
     pub const TAB:    u16 = 0x0F;
     pub const SPACE:  u16 = 0x39;
     pub const LSHIFT: u16 = 0x2A;
+    #[cfg_attr(not(windows), allow(dead_code))] // Interception's all-modifiers-up spray
     pub const RSHIFT: u16 = 0x36;
     pub const CTRL:   u16 = 0x1D; // right Ctrl = same code + E0 prefix
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub const ALT:    u16 = 0x38; // right Alt  = same code + E0 prefix
 }
 

@@ -47,9 +47,14 @@
 
 mod asr;
 mod audio;
+// One file per OS in each platform slot. Linux and Windows share the hotkey's
+// brain (chord.rs); macOS brings its own.
 #[cfg(target_os = "windows")]
 mod autostart;
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
+#[path = "autostart_linux.rs"]
+mod autostart;
+#[cfg(target_os = "macos")]
 #[path = "autostart_macos.rs"]
 mod autostart;
 mod bench;
@@ -59,18 +64,26 @@ mod bus;
 #[cfg(not(target_os = "windows"))]
 #[path = "bus_macos.rs"]
 mod bus;
+#[cfg(not(target_os = "macos"))]
+mod chord;
 mod clips;
 mod config;
 mod dsp;
 mod history;
 #[cfg(target_os = "windows")]
 mod hotkey;
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
+#[path = "hotkey_linux.rs"]
+mod hotkey;
+#[cfg(target_os = "macos")]
 #[path = "hotkey_macos.rs"]
 mod hotkey;
 #[cfg(target_os = "windows")]
 mod inject;
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
+#[path = "inject_linux.rs"]
+mod inject;
+#[cfg(target_os = "macos")]
 #[path = "inject_macos.rs"]
 mod inject;
 #[cfg(target_os = "windows")]
@@ -334,7 +347,31 @@ mod win {
     }
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
+mod win {
+    use std::fs::{File, OpenOptions};
+    use std::os::fd::AsRawFd;
+    use std::path::PathBuf;
+
+    /// A terminal launch already has stdout; nothing to borrow.
+    pub fn attach_parent_console() {}
+
+    /// flock on a file in $XDG_RUNTIME_DIR. The kernel drops the lock when we
+    /// die, crash included, so there's no stale-lockfile dance. Some(lock) =
+    /// we're the one; keep it alive for the process lifetime. None = someone
+    /// beat us to it. A lock file we can't even open isn't worth refusing to
+    /// start over: Some(None), run anyway.
+    pub fn single_instance() -> Option<Option<File>> {
+        let dir = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(crate::config::home);
+        let _ = std::fs::create_dir_all(&dir);
+        let Ok(f) = OpenOptions::new().create(true).truncate(false).write(true).open(dir.join("divinevoice.lock")) else {
+            return Some(None);
+        };
+        (unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0).then_some(Some(f))
+    }
+}
+
+#[cfg(target_os = "macos")]
 mod win {
     pub fn attach_parent_console() {}
 

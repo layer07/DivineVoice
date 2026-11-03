@@ -133,9 +133,38 @@ ONNX Runtime links statically. The UI is plain HTML/CSS/JS in `ui/`, baked into 
 exe and served to WebView2: no npm, no bundler. Every decision that can be a pure
 function is one, with tests.
 
+### Linux
+
+CPU only for now (`--no-default-features`: DirectML is Windows-only). Arch package
+names; other distros have the same libraries under their own names.
+
+```bash
+sudo pacman -S --needed webkit2gtk-4.1 libayatana-appindicator xdotool alsa-lib
+sudo usermod -aG input "$USER"     # read keyboards, create the paste keyboard; log out and back in
+cargo build --release --no-default-features
+cargo test --no-default-features
+```
+
+- **Hotkey:** read straight from `/dev/input`, so it works on X11, Wayland and a
+  TTY alike. It hears keys but can't swallow them, so bind something that does
+  nothing on its own: `F13`–`F24`, `Pause`, a lone `RCtrl`. Ctrl+Space works,
+  and the focused app gets a space too.
+- **Typing:** a uinput virtual keyboard presses Ctrl+V (Paste) or every key
+  (Type). Unicode mode falls back to Paste: Linux has no layout-free key injection.
+  No uinput? The transcript waits on your clipboard.
+- **Files:** config in `~/.config/DivineVoice/config.toml`; models, logs and
+  history in `~/.local/share/DivineVoice/`.
+- **Start with Windows** writes `~/.config/autostart/divinevoice.desktop`
+  (GNOME, KDE, XFCE). Hyprland / Sway ignore that folder: add
+  `exec-once = divinevoice` to their config instead.
+- **Tray:** needs a StatusNotifier host (KDE, GNOME with the AppIndicator
+  extension, Waybar's `tray` module). Open Settings from the tray menu: Linux
+  trays don't report clicks on the icon.
+
 ## Known limits
 
-- Windows only. Keyboard hotkeys only (no mouse buttons yet).
+- Windows and Linux. macOS is a contributed port (`scripts/package-macos.sh`).
+  Keyboard hotkeys only (no mouse buttons yet).
 - CUDA is untested on real hardware (ours has a driver too old). DirectML on AMD /
   Intel GPUs is untested. Reports welcome.
 - Type mode is US-QWERTY ASCII. Paste restores text clipboards only.
