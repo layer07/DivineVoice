@@ -34,6 +34,17 @@ Windows 10/11 x64. CPU is the default and needs nothing else. DirectML works on
 any DX12 GPU out of the box (`DirectML.dll` ships in the zip). CUDA needs NVIDIA
 driver 580+, cuDNN 9, and `DivineVoice-x.y.z-win64-cuda.zip` unzipped next to the exe.
 
+**Linux** x86_64 (glibc 2.39+: Ubuntu 24.04+, Debian 13, Fedora 40+, Arch): grab
+`DivineVoice-x.y.z-linux-x86_64.tar.gz`, then:
+
+```bash
+sudo apt install libwebkit2gtk-4.1-0 libayatana-appindicator3-1   # Arch: webkit2gtk-4.1 libayatana-appindicator
+sudo usermod -aG input "$USER"                                     # then log out and back in
+tar xzf DivineVoice-*-linux-x86_64.tar.gz && ./DivineVoice/divinevoice
+```
+
+CPU only on Linux for now. Details in [Build ▸ Linux](#linux).
+
 ## What's in it
 
 - **Fast.** ~100 ms from release to text on a desktop CPU. The **Perf** tab times every clip.
