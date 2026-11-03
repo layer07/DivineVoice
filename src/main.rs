@@ -266,7 +266,6 @@ where
 /// If the mode byte sits on a non-Idle value way past any sane duration,
 /// something died holding it. Reset it so the tray stops lying.
 fn watchdog(s: &State) -> Result<()> {
-    let max_rec = Duration::from_millis(s.cfg.read().max_ms as u64 + 5_000);
     let mut last = (s.mode(), Instant::now());
     while s.alive() {
         std::thread::sleep(Duration::from_millis(500));
@@ -274,7 +273,9 @@ fn watchdog(s: &State) -> Result<()> {
         if m != last.0 { last = (m, Instant::now()); continue; }
         let limit = match m {
             Mode::Idle => continue,
-            Mode::Recording => max_rec,
+            // Read live: raise max_ms in Settings and a long take must not be
+            // cut off by the old cap.
+            Mode::Recording => Duration::from_millis(s.cfg.read().max_ms as u64 + 5_000),
             Mode::Transcribing | Mode::Injecting => Duration::from_secs(60),
         };
         if last.1.elapsed() > limit && s.advance(m, Mode::Idle) {
