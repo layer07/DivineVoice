@@ -2,7 +2,7 @@
 /*
  * inject.rs
  *
- * Version: @(#)inject.rs 0.4.0 2026
+ * Version: @(#)inject.rs 0.5.0 2026
  *
  * Description: The Last Mile.
  *              Words go to cursor four ways: Paste, Paste plain, Unicode, real

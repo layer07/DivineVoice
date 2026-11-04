@@ -2,7 +2,7 @@
 /*
  * config.rs
  *
- * Version: @(#)config.rs 0.4.0 2026
+ * Version: @(#)config.rs 0.5.0 2026
  *
  * Description: The One File Humans Touch.
  *              config.toml in %APPDATA%. Every key has a default, so half a file
@@ -164,6 +164,18 @@ pub struct Config {
 
     /// How many runs the Perf page keeps. Timings only, no text — always on.
     pub perf_max: usize,
+
+    /// Files tab. Which model: "active" (whatever dictation uses) or a
+    /// catalogue id. It loads its own copy, so dictation keeps working.
+    pub files_model: String,
+    /// Where it runs. Unset = the same device as dictation.
+    pub files_device: Option<Device>,
+    /// One document for everything (true) or one per audio file.
+    pub files_merge: bool,
+    /// A name + length line above each file's text.
+    pub files_headers: bool,
+    pub files_format: crate::transcribe::Format,
+    pub files_order: crate::transcribe::Order,
 }
 
 impl Default for Config {
@@ -188,6 +200,12 @@ impl Default for Config {
             history:         false,
             history_max:     100,
             perf_max:        64,
+            files_model:     "active".into(),
+            files_device:    None,
+            files_merge:     true,
+            files_headers:   true,
+            files_format:    Default::default(),
+            files_order:     Default::default(),
         }
     }
 }

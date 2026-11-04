@@ -2,7 +2,7 @@
 /*
  * race.rs
  *
- * Version: @(#)race.rs 0.4.0 2026
+ * Version: @(#)race.rs 0.5.0 2026
  *
  * Description: The Race Track.
  *              You read once. Every model hears the same take: same breath,
@@ -99,7 +99,7 @@ impl Drop for Lap<'_> {
 
 /// Is the dictation model sitting on a GPU right now? Parked counts: back-to-
 /// back races must not let it reload onto the card in between.
-fn dictation_on_gpu(state: &State) -> bool {
+pub fn dictation_on_gpu(state: &State) -> bool {
     match &*state.model.read() {
         ModelStatus::Ready { device, .. } => device != Device::Cpu.label(),
         ModelStatus::Parked { .. } => true,
@@ -111,7 +111,7 @@ fn dictation_on_gpu(state: &State) -> bool {
 /// every 250 ms, but may be mid-load or mid-clip, hence the generous timeout.
 /// If it never answers we race anyway: worst case a GPU row says "out of
 /// memory", which is the truth.
-fn park(state: &State) {
+pub fn park(state: &State) {
     state.park.store(true, Ordering::Release);
     let deadline = Instant::now() + Duration::from_secs(30);
     while !state.parked.load(Ordering::Acquire) && Instant::now() < deadline && !state.race_cancel.load(Ordering::Acquire) {

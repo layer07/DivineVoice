@@ -53,6 +53,11 @@ CPU only on Linux for now. Details in [Build ▸ Linux](#linux).
   it, license, published WER, our measured numbers, *pick it if / skip it if*.
 - **CPU, CUDA or DirectML**, one click on Core. A GPU that can't run gets greyed
   out with the reason, never faked on the CPU.
+- **Files:** WhatsApp voice notes you don't have time to hear, a recording, a
+  podcast. Drop them anywhere on the window and read them instead. Ogg/Opus
+  (WhatsApp, Telegram), MP3, M4A, WAV, FLAC, WebM, whole folders. One document
+  or one file per audio, TXT / Markdown / SRT subtitles. It runs its own copy of
+  the model, so dictation keeps working while a podcast transcribes.
 - **Benchmark:** the same recorded tape through any models × devices, graded word by
   word, leaderboard. **Speed:** our reference numbers for all of it.
 - **Output:** Paste, Paste plain (terminals), Unicode, or **Type**: real HID
@@ -116,6 +121,9 @@ theme           = "default"     # lain, matrix, phosphor-amber, light-sakura…
 intra_threads   = 8             # ONNX threads; default cores/2, max 8
 history         = false         # keep recent transcripts (opt-in)
 log_level       = "info"        # "debug" also logs what you said
+files_model     = "active"      # Files tab: "active" = same as dictation, or a model id
+files_merge     = true          # one document, or one file per audio
+files_format    = "txt"         # txt | md | srt
 ```
 
 Logs: `%APPDATA%\DivineVoice\divinevoice.YYYY-MM-DD.log`, 7 days, no transcripts
@@ -126,6 +134,8 @@ unless `debug`.
 ```
 divinevoice --settings                                  # open the window
 divinevoice models | fetch parakeet-ultra               # catalogue / download headless
+divinevoice transcribe ~/Downloads/WhatsApp --out notes.txt          # voice notes → one document
+divinevoice transcribe talk.mp3 --format srt --out subs/             # one file per audio, subtitles
 divinevoice race --clip 01_altermann --models all --devices cpu,directml   # JSON lines
 divinevoice bench --clip 02_leftmost_child --device directml --first 1.8,3.1,4.6 --gap 5000 --press 2000
 ```

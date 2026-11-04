@@ -2,7 +2,7 @@
 /*
  * clips.rs
  *
- * Version: @(#)clips.rs 0.4.0 2026
+ * Version: @(#)clips.rs 0.5.0 2026
  *
  * Description: The Tape Library.
  *              Benchmark clips: audio plus the exact script it reads. Baked
@@ -37,10 +37,10 @@ use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
 use symphonia::core::audio::{AudioBufferRef, Signal};
-use symphonia::core::codecs::DecoderOptions;
+use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_OPUS};
 use symphonia::core::conv::IntoSample;
 use symphonia::core::errors::Error as SymErr;
-use symphonia::core::formats::FormatOptions;
+use symphonia::core::formats::{FormatOptions, FormatReader, Track};
 use symphonia::core::io::{MediaSource, MediaSourceStream};
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
@@ -152,6 +152,9 @@ fn decode_source(src: Box<dyn MediaSource>, ext: Option<&str>) -> Result<Vec<f32
         .context("unrecognised audio format")?
         .format;
     let track = fmt.default_track().ok_or_else(|| anyhow!("no audio track"))?.clone();
+    if track.codec_params.codec == CODEC_TYPE_OPUS {
+        return decode_opus(fmt.as_mut(), &track);
+    }
     let rate  = track.codec_params.sample_rate.ok_or_else(|| anyhow!("no sample rate"))?;
     let mut dec = symphonia::default::get_codecs()
         .make(&track.codec_params, &DecoderOptions::default())
@@ -173,6 +176,64 @@ fn decode_source(src: Box<dyn MediaSource>, ext: Option<&str>) -> Result<Vec<f32
         }
     }
     Ok(dsp::resample(&mono, rate, SR))
+}
+
+// ── Opus ─────────────────────────────────────────────────────────────────────
+//
+// WhatsApp and Telegram voice notes are Opus in an Ogg. symphonia reads the
+// Ogg (and hands us the header's pre-skip as `delay`) but can't decode Opus,
+// so the packets go to libopus. Opus runs at 48 kHz inside whatever the
+// header claims the input was, and libopus folds stereo to mono for us.
+
+const OPUS_SR: u32 = 48_000;
+/// 120 ms at 48 kHz: the longest an Opus packet can decode to.
+const OPUS_MAX_FRAME: usize = 5_760;
+
+fn decode_opus(fmt: &mut dyn FormatReader, track: &Track) -> Result<Vec<f32>> {
+    let dec = Opus::mono()?;
+    let mut frame = vec![0f32; OPUS_MAX_FRAME];
+    let mut pcm = Vec::with_capacity(OPUS_SR as usize * 30);
+    let mut bad = 0usize;
+    loop {
+        let pkt = match fmt.next_packet() {
+            Ok(p) => p,
+            Err(SymErr::IoError(_) | SymErr::ResetRequired) => break, // EOF, symphonia-style
+            Err(e) => return Err(e.into()),
+        };
+        if pkt.track_id() != track.id { continue; }
+        match dec.decode(&pkt.data, &mut frame) {
+            Ok(n) => pcm.extend_from_slice(&frame[..n]),
+            Err(_) => bad += 1, // one torn packet isn't the end of the voice note
+        }
+    }
+    if pcm.is_empty() { return Err(anyhow!("no Opus audio decoded ({bad} bad packets)")); }
+    // The encoder's warm-up: pre-skip samples at the start that aren't audio.
+    let skip = (track.codec_params.delay.unwrap_or(0) as usize).min(pcm.len());
+    Ok(dsp::resample(&pcm[skip..], OPUS_SR, SR))
+}
+
+/// A libopus decoder that frees itself.
+struct Opus(*mut unsafe_libopus::OpusDecoder);
+
+impl Opus {
+    fn mono() -> Result<Self> {
+        let mut err = 0;
+        let st = unsafe { unsafe_libopus::opus_decoder_create(OPUS_SR as i32, 1, &mut err) };
+        if st.is_null() || err != unsafe_libopus::OPUS_OK { return Err(anyhow!("libopus: decoder init failed ({err})")); }
+        Ok(Self(st))
+    }
+
+    /// One packet → samples written to `pcm`.
+    fn decode(&self, packet: &[u8], pcm: &mut [f32]) -> Result<usize> {
+        let n = unsafe {
+            unsafe_libopus::opus_decode_float(self.0, packet.as_ptr(), packet.len() as i32, pcm.as_mut_ptr(), pcm.len() as i32, 0)
+        };
+        usize::try_from(n).map_err(|_| anyhow!("libopus: packet rejected ({n})"))
+    }
+}
+
+impl Drop for Opus {
+    fn drop(&mut self) { unsafe { unsafe_libopus::opus_decoder_destroy(self.0) } }
 }
 
 fn append_mono(buf: AudioBufferRef<'_>, out: &mut Vec<f32>) {
@@ -214,5 +275,17 @@ mod tests {
             let wps = script.split_whitespace().count() as f64 / secs;
             assert!((1.0..=6.0).contains(&wps), "{id}: {wps:.2} words/s over {secs:.1}s, script/audio mismatch?");
         }
+    }
+
+    /// A WhatsApp-profile voice note (Ogg Opus, 16 kHz VoIP, 16 kbps, mono):
+    /// the six seconds that went in come out, and they're speech, not silence.
+    #[test]
+    fn whatsapp_opus_decodes() {
+        let ogg = include_bytes!("../tests/fixtures/voice_note.ogg");
+        let pcm = decode_source(Box::new(Cursor::new(ogg.to_vec())), Some("ogg")).unwrap();
+        let secs = pcm.len() as f64 / SR as f64;
+        assert!((5.9..=6.1).contains(&secs), "{secs:.3} s");
+        let rms = (pcm.iter().map(|s| s * s).sum::<f32>() / pcm.len() as f32).sqrt();
+        assert!(rms > 0.02, "rms {rms}: decoded silence?");
     }
 }

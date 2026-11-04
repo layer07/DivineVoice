@@ -2,7 +2,7 @@
 /*
  * state.rs
  *
- * Version: @(#)state.rs 0.4.0 2026
+ * Version: @(#)state.rs 0.5.0 2026
  *
  * Description: The Shared Truth.
  *              One byte say what the pipeline doing. Every hop is compare-and-
@@ -127,6 +127,10 @@ pub struct State {
     /// `parked` = "done, it's gone". See asr.rs, Parking.
     pub park:          AtomicBool,
     pub parked:        AtomicBool,
+    /// The Files tab: queue, results, and whether its worker is up.
+    pub files:         Mutex<crate::transcribe::Files>,
+    /// Files tab ▸ Stop: the worker drops the file it's on and the queue.
+    pub files_stop:    AtomicBool,
 }
 
 impl State {
@@ -149,6 +153,8 @@ impl State {
             race_cancel:   AtomicBool::new(false),
             park:          AtomicBool::new(false),
             parked:        AtomicBool::new(false),
+            files:         Mutex::new(Default::default()),
+            files_stop:    AtomicBool::new(false),
         }
     }
 

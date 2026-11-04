@@ -2,7 +2,7 @@
 /*
  * app.js
  *
- * Version: @(#)app.js 0.4.0 2026
+ * Version: @(#)app.js 0.5.0 2026
  *
  * Description: The Settings Page Brain.
  *              No framework. View is pure function: state in, HTML out. One
@@ -87,6 +87,12 @@ const I = {
   dl:       svg('<path d="M12 3v13M6 10l6 6 6-6M4 21h16"/>'),
   folder:   svg('<path d="M3 6h7l2 2h9v12H3z"/>'),
   refresh:  svg('<path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/>'),
+  // a page with a waveform on it: audio in, text out
+  files:    svg('<path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5M9.5 13v3M12 10.5v8M14.5 12v5"/>'),
+  play:     svg('<path d="M7 4l13 8-13 8z"/>'),
+  stop:     svg('<rect x="6" y="6" width="12" height="12"/>'),
+  retry:    svg('<path d="M4 13a8 8 0 1 0 2.3-5.7M4 4v5h5"/>'),
+  save:     svg('<path d="M4 3h13l3 3v15H4z"/><path d="M8 3v6h8V3M7 21v-7h10v7"/>'),
 };
 
 // ── state ────────────────────────────────────────────────────────────────
@@ -104,6 +110,7 @@ const cfg = () => S.snap.config;
 
 const PAGES = {
   general:  { name: 'Core',     icon: I.core,     view: () => viewGeneral() },
+  files:    { name: 'Files',    icon: I.files,    view: () => viewFiles() },
   models:   { name: 'Models',   icon: I.models,   view: () => viewModels() },
   audio:    { name: 'Audio',    icon: I.audio,    view: () => viewAudio() },
   perf:     { name: 'Perf',     icon: I.perf,     view: () => viewPerf() },
@@ -441,9 +448,160 @@ function viewHistory() {
     ${list}`;
 }
 
+// ── files ────────────────────────────────────────────────────────────────
+//
+// Voice notes you don't have time to listen to: drop them (anywhere on the
+// window: Rust gets the OS drop with real paths, the page never could), and
+// they queue, decode, transcribe. Rust owns the list, the order and the
+// merged document (S.snap.files.preview is exactly what Copy and Save write);
+// the page only draws it. Progress pushes repaint #f-list / #f-out in place,
+// so the ▶ keeps playing and nothing jumps.
+
+const dur = (ms) => {
+  const s = Math.round((ms || 0) / 1000);
+  return s >= 3600 ? `${s / 3600 | 0}:${String(s / 60 % 60 | 0).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}` : `${s / 60 | 0}:${String(s % 60).padStart(2, '0')}`;
+};
+const FMT = [['txt', 'TXT'], ['md', 'MD'], ['srt', 'SRT']];
+const ORDER = [['name', 'by name'], ['modified', 'by file date'], ['added', 'as dropped']];
+const filesView = () => S.snap.files || { jobs: [], preview: '', running: false, audio_ms: 0, exts: [] };
+/// The engine the Files tab will load: its own pick, or whatever dictation runs.
+const filesEngine = () => {
+  const id = cfg().files_model;
+  return id && id !== 'active' ? S.snap.models.find((m) => m.id === id)?.engine : activeEngine();
+};
+S.fplay = { id: null, audio: null };
+
+function filesSetup() {
+  const c = cfg(), sel = c.files_model || 'active';
+  const others = installed().filter((x) => x.id !== S.snap.active_model);
+  const opts = [`<option value="active" ${sel === 'active' ? 'selected' : ''}>${esc(activeModelName())} · same as dictation</option>`,
+    ...others.map((x) => `<option value="${esc(x.id)}" ${sel === x.id ? 'selected' : ''}>${esc(x.name)}</option>`)];
+  const on = c.files_device || c.device, eng = filesEngine();
+  const devs = devices().map((d) => {
+    const why = !d.ok ? `unavailable: ${d.reason}` : (S.snap.unsupported || []).find((u) => u.engine === eng && u.device === d.device)?.why;
+    return `<button class="${on === d.device ? 'on' : ''}" ${why ? 'disabled' : `data-act="fset" data-k="files_device" data-v='"${d.device}"'`}
+      title="${esc(why || `transcribe files on ${DEV_LONG[d.device]}${c.files_device ? '' : ' (same as dictation)'}`)}">${DEV[d.device]}</button>`;
+  }).join('');
+  const lang = LANGS.find(([k]) => k === c.language)?.[1] || c.language;
+  return `<span class="select" style="flex:1;min-width:0"><select data-key="files_model" aria-label="model for files">${opts.join('')}</select></span>
+    <span class="seg devs" aria-label="device for files">${devs}</span>
+    <a class="chip link" data-act="page" data-page="general" title="language is shared with dictation: change it on Core">${I.globe}${esc(lang)}</a>`;
+}
+
+const PHASE = {
+  queued:   ['', 'queued'],
+  decoding: ['warn', 'decoding'],
+  running:  ['warn', 'listening'],
+  done:     ['ok', ''],
+  failed:   ['err', 'failed'],
+  stopped:  ['', 'stopped'],
+};
+
+function fileRow(j, merged) {
+  const [cls, label] = PHASE[j.phase] || ['', j.phase];
+  const busy = j.phase === 'running' || j.phase === 'decoding';
+  const pct = j.of ? 100 * j.done / j.of : 0;
+  const state = busy
+    ? `<span class="b-bar"><i style="width:${j.phase === 'decoding' ? 4 : Math.max(6, pct)}%"></i></span><span class="mono dim">${j.phase === 'decoding' ? 'decoding' : `${j.done}/${j.of}`}</span>`
+    : j.phase === 'done'
+      ? `<span class="mono dim" title="transcribed in ${(j.asr_ms / 1000).toFixed(1)} s">${f1(j.audio_ms / Math.max(j.asr_ms, 1))}× real-time</span>`
+      : `<span class="mono dim">${label}</span>`;
+  const words = j.text ? j.text.split(/\s+/).filter(Boolean).length : 0;
+  // Second line: what it is and how it went. The name keeps the full width:
+  // WhatsApp's names differ only in the timestamp at the very end.
+  const sub = [j.audio_ms && dur(j.audio_ms), words && `${words} word${words === 1 ? '' : 's'}`,
+    j.model && `${j.model} · ${DEV[j.device] || j.device}`, j.phase !== 'done' && !j.model && fmtBytes(j.bytes)].filter(Boolean).join('  ·  ');
+  const playing = S.fplay.id === j.id;
+  const act = (a, icon, title, extra = '') => `<button class="btn ghost ${extra}" data-act="${a}" data-id="${j.id}" title="${title}">${icon}</button>`;
+  return `<div class="f-row ${j.phase}" data-job="${j.id}">
+    <div class="f-top">
+      <span class="dot ${cls}"></span>
+      <div class="f-id"><div class="f-name" title="${esc(`${j.folder}${j.folder ? '/' : ''}${j.name}`)}">${esc(j.name)}</div>
+        <div class="f-sub">${esc(sub)}</div></div>
+      <span class="f-state">${state}</span>
+      <span class="f-acts">
+        ${act('files_play', playing ? I.stop : I.play, playing ? 'stop' : 'listen to the original', playing ? 'on' : '')}
+        ${when(j.phase === 'done', () => act('files_copy', I.copy, 'copy this text'))}
+        ${when(['failed', 'stopped', 'done'].includes(j.phase), () => act('files_retry', I.retry, j.phase === 'done' ? 'transcribe again (another model?)' : 'try again'))}
+        ${act('files_reveal', I.folder, 'show in folder')}
+        ${when(!busy, () => act('files_remove', I.trash, 'remove from the list', 'danger'))}
+      </span>
+    </div>
+    ${when(j.phase === 'done' && !merged, () => `<div class="f-text">${j.text ? esc(j.text) : '<span class="dim">(nothing heard)</span>'}</div>`)}
+    ${when(j.error, () => `<div class="f-err" title="${esc(j.error)}">✕ ${esc(gist(j.error))}</div>`)}
+  </div>`;
+}
+
+function filesList() {
+  const f = filesView(), c = cfg();
+  if (!f.jobs.length) return '';
+  const done = f.jobs.filter((j) => j.phase === 'done').length;
+  return `<div class="section-label">${f.jobs.length} file${f.jobs.length === 1 ? '' : 's'} · ${done} done${when(f.audio_ms, ` · ${dur(f.audio_ms)} of audio`)}
+      <span class="spacer"></span>
+      ${when(f.running, `<button class="btn ghost" data-act="files_stop">${I.stop}Stop</button>`)}
+      <button class="btn ${S.confirm === 'files' ? 'danger' : 'ghost'}" data-act="files_clear">${S.confirm === 'files' ? 'Really clear?' : 'Clear'}</button></div>
+    <div class="f-list">${f.jobs.map((j) => fileRow(j, c.files_merge)).join('')}</div>`;
+}
+
+function filesOut() {
+  const f = filesView(), c = cfg();
+  if (!f.jobs.some((j) => j.phase === 'done')) return '';
+  const srt = c.files_format === 'srt';
+  const seg = (k, pairs, cur) => `<span class="seg">${pairs.map(([v, label]) =>
+    `<button class="${cur === v ? 'on' : ''}" data-act="fset" data-k="${k}" data-v='${JSON.stringify(v)}'>${label}</button>`).join('')}</span>`;
+  return `<div class="section-label">output</div>
+    <section class="card f-out">
+      <div class="row">
+        ${seg('files_merge', [[true, 'One document'], [false, 'One per file']], c.files_merge)}
+        ${seg('files_format', FMT, c.files_format)}
+        <label class="switch ${srt ? 'off' : ''}" title="${srt ? 'subtitles have no room for headers' : 'name and length above each file'}"><input type="checkbox" data-key="files_headers" ${c.files_headers ? 'checked' : ''} ${srt ? 'disabled' : ''}><i></i><span>headers</span></label>
+        ${select('files_order', ORDER.map(([v, l]) => `<option value="${v}" ${c.files_order === v ? 'selected' : ''}>${l}</option>`).join(''))}
+        <span class="spacer"></span>
+        <button class="btn" data-act="files_copy">${I.copy}Copy</button>
+        <button class="btn primary" data-act="files_save">${I.save}Save…</button>
+      </div>
+      ${when(c.files_merge, () => `<div class="term f-term"><div class="term-body f-preview" id="f-preview">${esc(f.preview)}</div></div>`)}
+      ${when(!c.files_merge, '<p class="desc" style="margin:10px 0 0">Save… asks for a folder and writes one file per audio, named after it. Copy still takes everything at once.</p>')}
+    </section>`;
+}
+
+function filesDrop() {
+  const d = S.drag, exts = filesView().exts.join(' · ');
+  const big = d ? (d.audio ? `Drop ${d.audio} file${d.audio === 1 ? '' : 's'}` : 'Nothing that looks like audio') : 'Drop voice notes here';
+  return `${I.files}<b>${big}</b><span class="dim">or click to browse · ${esc(exts)} · folders too</span>`;
+}
+
+function viewFiles() {
+  return `${head('Files', 'WhatsApp audio you don\'t have time to hear, a recording, a whole podcast. Drop it, read it. Nothing leaves this machine.')}
+    <div class="drop ${S.drag ? 'hot' : ''}" id="f-drop" data-act="files_browse" role="button" tabindex="0">${filesDrop()}</div>
+    <div class="row f-setup">${filesSetup()}</div>
+    <div id="f-list">${filesList()}</div>
+    <div id="f-out">${filesOut()}</div>`;
+}
+
+/// In-place repaint for progress pushes. The preview keeps its scroll.
+const refreshFiles = () => {
+  if (S.page !== 'files') return;
+  const pv = document.getElementById('f-preview'), keep = pv ? pv.scrollTop : 0;
+  benchPart('f-list', filesList());
+  benchPart('f-out', filesOut());
+  const pv2 = document.getElementById('f-preview'); if (pv2) pv2.scrollTop = keep;
+};
+
+const stopFilePlay = () => { S.fplay.audio?.pause(); S.fplay = { id: null, audio: null }; };
+
+/// Files dragged over another page: a veil says where they're going.
+const veil = () => {
+  let v = document.getElementById('veil');
+  const show = S.drag && S.page !== 'files';
+  if (!show) { v?.remove(); return; }
+  if (!v) { v = document.createElement('div'); v.id = 'veil'; v.className = 'veil'; document.body.append(v); }
+  v.innerHTML = `${I.files}<span>${S.drag.audio ? `Drop to transcribe ${S.drag.audio} file${S.drag.audio === 1 ? '' : 's'}` : 'No audio in there'}</span>`;
+};
+
 // ── perf ─────────────────────────────────────────────────────────────────
 
-const f1 = (x) => (Number.isFinite(x) ? x.toFixed(x >= 100 ? 0 : 1) : '—');
+const f1 =(x) => (Number.isFinite(x) ? x.toFixed(x >= 100 ? 0 : 1) : '—');
 const xrt = (e) => e.audio_ms / Math.max(e.asr_ms, 0.1);
 const wps = (e) => (e.words ? e.words / (e.asr_ms / 1000) : NaN);
 
@@ -1224,6 +1382,21 @@ const ON = {
     if (!d.cancelled && Object.values(r.rows).some((x) => x.score)) SFX.win();
     refreshBench();
   },
+  // ── files ──
+  files: (d) => { if (!S.snap) return; S.snap.files = d; refreshFiles(); },
+  files_drag: (d) => {
+    S.drag = d.on ? d : null;
+    veil();
+    const z = document.getElementById('f-drop');
+    if (z) { z.classList.toggle('hot', !!S.drag); z.innerHTML = filesDrop(); }
+  },
+  files_added: (d) => {
+    const extra = [d.already && `${d.already} already in the list`, d.skipped && `${d.skipped} not audio`].filter(Boolean).join(' · ');
+    if (d.added) toast('ok', `${d.added} file${d.added === 1 ? '' : 's'} queued${extra ? ` · ${extra}` : ''}`);
+    else toast(d.already ? 'info' : 'error', extra || 'nothing to transcribe in there');
+    S.drag = null; veil();
+    if (d.added && S.page !== 'files') ACT.page({ dataset: { page: 'files' } });
+  },
   perf: (d) => {
     S.snap.perf = d;
     // Don't yank the table out from under someone typing in perf_max.
@@ -1255,6 +1428,7 @@ const ACT = {
   page: (el) => {
     if (S.page === 'bench' && el.dataset.page !== 'bench') benchDisarm(); // leaving = dictation back to your cursor
     S.page = el.dataset.page; S.confirm = null; render(); $('#page').scrollTop = 0;
+    veil();
   },
   // ── benchmark ──
   bench_pick: (el) => {
@@ -1321,6 +1495,33 @@ const ACT = {
   win_min: () => ipc('win_min'),
   win_close: () => ipc('win_close'),
   set: (el) => ipc('set', { key: el.dataset.k, value: el.dataset.v }),
+  // Same, but data-v is JSON: booleans and null survive the trip.
+  fset: (el) => ipc('set', { key: el.dataset.k, value: JSON.parse(el.dataset.v) }),
+  // ── files ──
+  files_browse: () => ipc('files_browse'),
+  files_stop:   () => ipc('files_stop'),
+  files_save:   () => ipc('files_save'),
+  files_clear:  () => armed('files', () => { stopFilePlay(); ipc('files_clear'); }),
+  files_copy:   (el) => ipc('files_copy', el.dataset.id ? { id: Number(el.dataset.id) } : {}),
+  files_retry:  (el) => ipc('files_retry', { id: Number(el.dataset.id) }),
+  files_reveal: (el) => ipc('files_reveal', { id: Number(el.dataset.id) }),
+  files_remove: (el) => {
+    const id = Number(el.dataset.id);
+    if (S.fplay.id === id) stopFilePlay();
+    ipc('files_remove', { id });
+  },
+  // ▶ the original: one at a time, a second click stops it.
+  files_play: (el) => {
+    const id = Number(el.dataset.id), was = S.fplay.id;
+    stopFilePlay();
+    if (was !== id) {
+      const a = new Audio(`/file/${id}`);
+      S.fplay = { id, audio: a };
+      a.onended = () => { stopFilePlay(); refreshFiles(); };
+      a.play().catch(() => { toast('error', "can't play it: the file moved, or this window doesn't speak that format"); stopFilePlay(); refreshFiles(); });
+    }
+    refreshFiles();
+  },
   learn: () => {
     S.learnErr = null;
     S.learning = !S.learning;
@@ -1438,6 +1639,7 @@ const ctxHtml = () => {
     <div class="ctx-label">run on</div><div class="seg ctx-seg">${devs}</div>
     ${when(models.length > 1, () => `<div class="ctx-label">model</div>${models.join('')}`)}
     <div class="ctx-sep"></div>
+    ${item('files_browse', `${I.files}Transcribe audio files…`)}
     ${item('bench_go', `${I.bench}Benchmark this setup`)}
     ${when(last, () => item('copy', `${I.copy}Copy last transcript`, `data-id="${last.id}"`))}
     ${item('open', `${I.folder}Open logs`, 'data-what="logs"')}
@@ -1511,6 +1713,7 @@ document.addEventListener('keydown', (e) => {
   if (S.learning) { e.preventDefault(); return; }
   if (e.key === 'Escape') { if (document.getElementById('theme-panel')) themeClose(); else if (document.getElementById('ctx')) ctxClose(); else if (!e.target.matches('input, textarea, select')) ACT.win_min(); return; }
   if (e.key === 'Enter' && e.target.id === 'custom-dir') ACT.model_dir();
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.id === 'f-drop') { e.preventDefault(); ACT.files_browse(); }
   if (e.key === 'Enter' && e.target.matches('input[data-key]')) e.target.blur();
 });
 

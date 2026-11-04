@@ -1,6 +1,6 @@
 [package]
 name        = "divinevoice"
-version     = "0.4.0"
+version     = "0.5.0"
 edition     = "2021"
 authors     = ["Magnus Leatti (layer07) <djleatti@gmail.com>"]
 license     = "GPL-2.0-or-later"
@@ -31,8 +31,18 @@ parakeet-rs = { version = "0.4", features = ["cohere"] }
 # Mic. WASAPI under the hood.
 cpal = "0.15"
 
-# `bench` subcommand: decode mp3/wav/flac/m4a/ogg into PCM.
+# Files tab + `bench`: decode mp3/wav/flac/m4a/ogg/webm into PCM. Default
+# features bring the ogg and mkv containers along.
 symphonia = { version = "0.5", features = ["mp3", "wav", "flac", "aac", "isomp4", "vorbis"] }
+
+# Opus, the codec inside every WhatsApp / Telegram voice note. symphonia
+# demuxes the Ogg but has no Opus decoder. This is libopus itself, transpiled
+# to Rust by c2rust: the reference decoder, and no C toolchain to build it.
+unsafe-libopus = "0.2"
+
+# Native open / save dialogs for the Files tab (Win32 on Windows, the XDG
+# portal on Linux). Run off the UI thread, so the window never freezes.
+rfd = "0.17"
 
 # fbdirector bus framing (optional at runtime; off unless configured).
 postcard = { version = "1", features = ["use-std"] }

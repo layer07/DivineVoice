@@ -2,7 +2,7 @@
 /*
  * main.rs
  *
- * Version: @(#)main.rs 0.4.0 2026
+ * Version: @(#)main.rs 0.5.0 2026
  *
  * Description: The Cave Entrance.
  *              Six threads and a tray. Hotkey hear finger. Audio hear mouth.
@@ -94,6 +94,7 @@ mod models;
 mod perf;
 mod race;
 mod state;
+mod transcribe;
 mod tray;
 mod ui;
 mod wer;
@@ -129,6 +130,11 @@ fn main() -> Result<()> {
             win::attach_parent_console();
             headless_race(&args[1..])
         }
+        Some("transcribe") => {
+            win::attach_parent_console();
+            let (cfg, _) = Config::load();
+            transcribe::cli(&args[1..], &cfg)
+        }
         Some("bench") => {
             win::attach_parent_console();
             let (cfg, _) = Config::load();
@@ -146,6 +152,7 @@ fn main() -> Result<()> {
                    \x20      divinevoice models                      list the catalogue\n\
                    \x20      divinevoice fetch <id>                  download a model, headless\n\
                    \x20      divinevoice race --clip <id> [--models all] [--devices cpu,directml]   race (JSON lines)\n\
+                   \x20      divinevoice transcribe <file|folder>... [--out <file|folder>] [--format txt|md|srt]   voice notes → text\n\
                    \x20      divinevoice bench <audio> [--model <dir|id>] [--iters N] [--thread-scan 1,2,4,8] [--text]")
         }
     }

@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.5.0 · 2026-11-04
+
+**Files: the voice notes you don't have time to hear.**
+
+- **New Files tab.** Drop audio anywhere on the window (it jumps to the tab),
+  click to browse, or drop a whole folder: a WhatsApp export opens one level
+  down. Each file queues, decodes and transcribes with live progress, then
+  sits there with its text, a ▶ to hear the original, copy, retry (another
+  model?) and *show in folder*.
+  - **Formats:** Ogg/Opus (WhatsApp, Telegram), `.opus`, MP3, M4A/MP4, AAC,
+    WAV, FLAC, WebM/MKV.
+  - **Output:** one document or one file per audio; TXT, Markdown, or SRT
+    subtitles with sentence timing (several files share one clock, back to
+    back). Order by name (chronological for WhatsApp's names), file date, or as
+    dropped. Copy or Save…, with native dialogs.
+  - **Its own model:** pick any installed model and device for files. It
+    loads its own copy, so dictation keeps working while a podcast chews; a
+    CPU copy stays warm for a minute, a GPU one leaves at once and parks the
+    dictation model off the card meanwhile, like a race.
+  - **Long audio** is cut only past two minutes, at the quiet spots. Voice
+    notes go in whole: every cut costs a stray full stop.
+- **Opus decoding.** symphonia reads Ogg but has no Opus decoder; libopus now
+  decodes it (`unsafe-libopus`, the reference decoder transpiled to Rust: no C
+  toolchain). WhatsApp-profile Opus (16 kHz VoIP, 16 kbps) transcribes at the
+  same accuracy as the MP3 it came from, give or take what 16 kbps throws away.
+- **`divinevoice transcribe <files|folders>`**: the Files tab without the
+  window. Merged to stdout or `--out file`, one file each with `--out folder/`,
+  `--format txt|md|srt`.
+- **Fix: "600 ,000" in what you dictate.** Parakeet's number formatter puts a
+  space before thousands groups; only the benchmark judge was fixing it. Now
+  every transcript is.
+
 ## 0.4.0 · 2026-11-03
 
 **Linux. And a Mac port from outside.**

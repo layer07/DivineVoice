@@ -2,7 +2,7 @@
 /*
  * hotkey_linux.rs
  *
- * Version: @(#)hotkey_linux.rs 0.4.0 2026
+ * Version: @(#)hotkey_linux.rs 0.5.0 2026
  *
  * Description: The Ear On The Penguin.
  *              No hook on Linux. X11 have one, Wayland say no, TTY say what. So go

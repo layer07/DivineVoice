@@ -2,7 +2,7 @@
 /*
  * wer.rs
  *
- * Version: @(#)wer.rs 0.4.0 2026
+ * Version: @(#)wer.rs 0.5.0 2026
  *
  * Description: The Judge.
  *              What you were supposed to say, what the machine heard, and
@@ -125,7 +125,7 @@ fn runs(n: &str) -> Vec<String> {
 
 /// Parakeet's number formatter sometimes writes "600 ,000". Glue a space that
 /// sits between a digit and a ",ddd" group back out, so it's one number.
-fn glue_digit_groups(s: &str) -> String {
+pub fn glue_digit_groups(s: &str) -> String {
     let c: Vec<char> = s.chars().collect();
     let group = |i: usize| c.get(i) == Some(&',') && (1..=3).all(|k| c.get(i + k).is_some_and(char::is_ascii_digit))
         && !c.get(i + 4).is_some_and(char::is_ascii_digit);

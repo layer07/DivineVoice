@@ -2,7 +2,7 @@
 /*
  * asr.rs
  *
- * Version: @(#)asr.rs 0.4.0 2026
+ * Version: @(#)asr.rs 0.5.0 2026
  *
  * Description: The Ear Brain.
  *              Clip come in, words come out. Parakeet on CPU or GPU, you pick,
@@ -363,7 +363,16 @@ pub fn load_on(dir: &Path, threads: Option<usize>, want: Device, strict: bool, l
 }
 
 /// One clip in, trimmed text out. Empty string = it heard nothing worth typing.
-pub fn transcribe(model: &mut Model, mut clip: Vec<f32>) -> Result<String> {
+pub fn transcribe(model: &mut Model, clip: Vec<f32>) -> Result<String> {
+    transcribe_raw(model, clip).map(|t| tidy(&t))
+}
+
+/// What the models write, minus their known typos. Parakeet's number
+/// formatter sometimes puts a space before a thousands group ("600 ,000");
+/// that was only fixed for the WER judge, and you were typing it. Pure.
+pub fn tidy(text: &str) -> String { crate::wer::glue_digit_groups(text) }
+
+fn transcribe_raw(model: &mut Model, mut clip: Vec<f32>) -> Result<String> {
     clip.resize(padded_len(clip.len(), model.pad_to), 0.0); // trailing silence; see the first-shape trap
     fn go(t: &mut impl Transcriber, clip: Vec<f32>) -> Result<String> {
         t.transcribe_samples(clip, SR, 1, Some(TimestampMode::Sentences))
@@ -383,6 +392,37 @@ pub fn transcribe(model: &mut Model, mut clip: Vec<f32>) -> Result<String> {
                 .map(|r| m.transcribe_audio(&clip[r], lang, true, true).map(|t| t.trim().to_owned()))
                 .collect::<std::result::Result<Vec<_>, _>>()?;
             Ok(parts.into_iter().filter(|t| !t.is_empty()).collect::<Vec<_>>().join(sep))
+        }
+    }
+}
+
+/// One sentence, or for engines that don't time their words the whole clip,
+/// in seconds from the start of the audio it came from.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct Seg { pub start: f64, pub end: f64, pub text: String }
+
+/// `transcribe`, plus where each sentence sits (subtitles, the Files tab).
+/// TDT and Unified time their sentences; Nemotron and Cohere don't, so their
+/// clip comes back as one segment. DirectML's padding is trailing silence, so
+/// the times hold.
+pub fn transcribe_timed(model: &mut Model, mut clip: Vec<f32>) -> Result<(String, Vec<Seg>)> {
+    let secs = clip.len() as f64 / SR as f64;
+    fn timed(t: &mut impl Transcriber, clip: Vec<f32>) -> Result<(String, Vec<Seg>)> {
+        let r = t.transcribe_samples(clip, SR, 1, Some(TimestampMode::Sentences))?;
+        let segs = r.tokens.iter()
+            .filter(|s| !s.text.trim().is_empty())
+            .map(|s| Seg { start: s.start as f64, end: s.end as f64, text: tidy(s.text.trim()) })
+            .collect();
+        Ok((tidy(r.text.trim()), segs))
+    }
+    clip.resize(padded_len(clip.len(), model.pad_to), 0.0);
+    match &mut model.net {
+        Net::Tdt(m)     => timed(m.as_mut(), clip),
+        Net::Unified(m) => timed(m.as_mut(), clip),
+        _ => {
+            let text = transcribe(model, clip)?;
+            let segs = if text.is_empty() { vec![] } else { vec![Seg { start: 0.0, end: secs, text: text.clone() }] };
+            Ok((text, segs))
         }
     }
 }

@@ -2,7 +2,7 @@
 /*
  * inject_linux.rs
  *
- * Version: @(#)inject_linux.rs 0.4.0 2026
+ * Version: @(#)inject_linux.rs 0.5.0 2026
  *
  * Description: The Hand On The Penguin.
  *              Kernel make us a keyboard: uinput. Our keys come out of a real

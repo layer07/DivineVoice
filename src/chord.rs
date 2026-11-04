@@ -2,7 +2,7 @@
 /*
  * chord.rs
  *
- * Version: @(#)chord.rs 0.4.0 2026
+ * Version: @(#)chord.rs 0.5.0 2026
  *
  * Description: The Brain Behind The Ear.
  *              Every OS hear keys its own way. Windows hook, Linux evdev. All of

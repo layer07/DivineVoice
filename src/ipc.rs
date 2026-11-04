@@ -2,7 +2,7 @@
 /*
  * ipc.rs
  *
- * Version: @(#)ipc.rs 0.4.0 2026
+ * Version: @(#)ipc.rs 0.5.0 2026
  *
  * Description: The Settings Switchboard.
  *              Page send JSON, Rust answer JSON. Config write is one trick:
@@ -96,6 +96,7 @@ pub fn snapshot(state: &State, full: bool) -> Value {
                             .map(|(d, r)| json!({ "device": d, "ok": r.is_ok(), "reason": r.as_ref().err() }))
                             .collect::<Vec<_>>()),
         "perf":         perf_view(state),
+        "files":        crate::transcribe::view(state),
         "paths": {
             "config": Config::path(),
             "home":   config::home(),
@@ -126,6 +127,7 @@ pub fn handle(state: &Arc<State>, raw: &str) -> Vec<String> {
 
 fn dispatch(state: &Arc<State>, cmd: &str, m: &Value) -> Result<Vec<String>> {
     let str_arg = |k: &str| m[k].as_str().ok_or_else(|| anyhow!("{cmd}: missing \"{k}\""));
+    let id_arg = || m["id"].as_u64().ok_or_else(|| anyhow!("{cmd}: missing \"id\""));
     let refreshed = |extra: Vec<String>| -> Vec<String> {
         std::iter::once(envelope("state", &snapshot(state, false))).chain(extra).collect()
     };
@@ -170,6 +172,19 @@ fn dispatch(state: &Arc<State>, cmd: &str, m: &Value) -> Result<Vec<String>> {
             vec![]
         }
         "race_cancel" => { state.race_cancel.store(true, Ordering::Release); vec![] }
+
+        // Files tab. The list comes back as a `files` push; these just act.
+        "files_browse" => { crate::transcribe::browse(state); vec![] }
+        "files_stop"   => { crate::transcribe::stop(state); vec![] }
+        "files_clear"  => { crate::transcribe::clear(state); vec![] }
+        "files_save"   => { crate::transcribe::save(state); vec![] }
+        "files_retry"  => { crate::transcribe::retry(state, id_arg()?); vec![] }
+        "files_remove" => { crate::transcribe::remove(state, id_arg()?)?; vec![] }
+        "files_reveal" => { crate::transcribe::reveal(state, id_arg()?)?; vec![] }
+        "files_copy"   => {
+            let n = crate::transcribe::copy(state, m["id"].as_u64())?;
+            vec![toast("ok", format!("copied {n} characters"))]
+        }
 
         "autostart" => {
             let on = m["on"].as_bool().ok_or_else(|| anyhow!("autostart: on"))?;

@@ -2,7 +2,7 @@
 /*
  * app.css
  *
- * Version: @(#)app.css 0.4.0 2026
+ * Version: @(#)app.css 0.5.0 2026
  *
  * Description: The Corpo-Doom Skin.
  *              Every colour from theme.css. Typing a hex code here? You doing it
@@ -786,6 +786,72 @@ a.link:hover { text-decoration: underline; }
 .toast.error { border-left-color: var(--io-error); color: var(--io-error); }
 .toast.bye   { opacity: 0; transform: translateX(10px); transition: .25s; }
 @keyframes toast-in { from { opacity: 0; transform: translateX(14px); } }
+
+/* ── files ──────────────────────────────────────────────────────────── */
+
+.drop {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+  padding: 20px; margin-bottom: 10px; cursor: pointer; text-align: center; outline: none;
+  border: 1px dashed var(--io-border); background: var(--io-surface-sunken);
+  transition: border-color .15s, box-shadow .15s, background .15s;
+}
+.drop svg { width: 30px; height: 30px; color: var(--io-accent-dim); transition: color .15s, transform .15s; }
+.drop b { font: 600 13px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--io-text-primary); }
+.drop .dim { font: 11.5px var(--mono); }
+.drop:hover, .drop:focus-visible { border-color: var(--io-accent-dim); }
+.drop:hover svg { color: var(--io-accent); }
+.drop.hot {
+  border-style: solid; border-color: var(--io-accent); background: var(--io-surface-raised);
+  box-shadow: inset 0 0 40px var(--io-accent-subtle), 0 0 24px var(--io-accent-subtle);
+}
+.drop.hot svg { color: var(--io-accent); transform: translateY(-3px) scale(1.08); filter: drop-shadow(0 0 8px var(--io-accent-glow)); }
+
+.f-setup { flex-wrap: nowrap; margin-bottom: 4px; }
+.f-setup .chip { cursor: pointer; white-space: nowrap; }
+.f-setup .chip:hover { border-color: var(--io-accent-dim); color: var(--io-text-primary); }
+
+.f-list { display: flex; flex-direction: column; gap: 4px; }
+.f-row {
+  padding: 6px 10px 6px 12px; background: var(--io-surface-raised);
+  border: 1px solid var(--io-border); border-left: 2px solid var(--io-border);
+  transition: border-color .12s, background .12s;
+}
+.f-row:hover { background: var(--io-surface-overlay); }
+.f-row.decoding, .f-row.running { border-left-color: var(--io-warning); }
+.f-row.done { border-left-color: var(--io-success-dim); }
+.f-row.failed { border-left-color: var(--io-error); }
+.f-row.stopped, .f-row.queued { opacity: .8; }
+.f-top { display: grid; grid-template-columns: 10px minmax(0, 1fr) 170px auto; gap: 10px; align-items: center; min-height: 34px; }
+.f-id { min-width: 0; }
+.f-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.f-sub { margin-top: 2px; font: 11px var(--mono); color: var(--io-text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.f-state { display: flex; align-items: center; gap: 8px; font-size: 11px; justify-content: flex-end; }
+.f-acts { display: flex; gap: 0; opacity: .35; transition: opacity .12s; }
+.f-row:hover .f-acts, .f-acts .on { opacity: 1; }
+.f-acts .btn { padding: 4px 6px; }
+.f-acts .btn.on { color: var(--io-accent); opacity: 1; }
+.f-text {
+  margin: 6px 0 2px 20px; padding-left: 10px; border-left: 1px solid var(--io-border);
+  color: var(--io-text-secondary); font-size: 13px; line-height: 1.6;
+  white-space: pre-wrap; word-break: break-word; user-select: text;
+}
+.f-err { margin: 4px 0 0 20px; color: var(--io-error); font: 11.5px var(--mono); cursor: help; }
+
+.f-out .row { gap: 10px; }
+.f-out .select select { padding-top: 6px; padding-bottom: 6px; font-size: 12px; }
+.switch.off { opacity: .4; }
+.f-term { margin-top: 12px; }
+.f-preview { height: auto; min-height: 60px; max-height: 280px; white-space: pre-wrap; font-size: 13px; line-height: 1.65; color: var(--io-text-primary); }
+
+/* files dragged over a page that isn't Files: say where they're going */
+.veil {
+  position: fixed; inset: 8px; z-index: 60; pointer-events: none;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+  background: rgba(0, 0, 0, .62); border: 2px dashed var(--io-accent);
+  box-shadow: inset 0 0 80px var(--io-accent-subtle);
+  font: 700 16px var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--io-accent-bright);
+}
+.veil svg { width: 44px; height: 44px; filter: drop-shadow(0 0 12px var(--io-accent-glow)); }
 
 /* no responsive breakpoints: the window is a fixed 1100×720 (see ui.rs). */
 @media (prefers-reduced-motion: reduce) {

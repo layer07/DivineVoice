@@ -2,7 +2,7 @@
 /*
  * ui.rs
  *
- * Version: @(#)ui.rs 0.4.0 2026
+ * Version: @(#)ui.rs 0.5.0 2026
  *
  * Description: The Main Thread.
  *              tao event loop, tray, frameless WebView2 Settings that exist only
@@ -69,6 +69,10 @@ pub enum UserEvent {
     Push(String),
     /// Something changed; resend the state snapshot.
     Refresh,
+    /// Files dragged over the window (how many look like audio), or gone.
+    Drag(Option<usize>),
+    /// Files dropped anywhere on the window: off to the Files tab.
+    Drop(Vec<std::path::PathBuf>),
 }
 
 static PROXY: OnceLock<Mutex<EventLoopProxy<UserEvent>>> = OnceLock::new();
@@ -168,6 +172,19 @@ pub fn run(state: Arc<State>, open_at_start: bool) -> Result<()> {
                 if let Some(s) = &settings { s.send(&js); }
             }
 
+            // The page can't see paths (browsers hide them); wry hands us the
+            // OS drop, so audio dropped anywhere goes straight to the queue.
+            Event::UserEvent(UserEvent::Drag(n)) => {
+                if let Some(s) = &settings {
+                    s.send(&ipc::envelope("files_drag", &serde_json::json!({ "on": n.is_some(), "audio": n.unwrap_or(0) })));
+                }
+            }
+            Event::UserEvent(UserEvent::Drop(paths)) => {
+                if let Some(s) = &settings { s.send(&ipc::envelope("files_drag", &serde_json::json!({ "on": false }))); }
+                let added = crate::transcribe::add(&state, paths);
+                if let Some(s) = &settings { s.send(&ipc::envelope("files_added", &added)); }
+            }
+
             Event::UserEvent(UserEvent::Refresh) => {
                 if let Some(s) = &settings { s.send(&ipc::envelope("state", &ipc::snapshot(&state, false))); }
             }
@@ -195,7 +212,7 @@ pub fn run(state: Arc<State>, open_at_start: bool) -> Result<()> {
         if open {
             match &settings {
                 Some(s) => { s.window.set_visible(true); s.window.set_minimized(false); s.window.set_focus(); }
-                None => match build_settings(target, &mut web_ctx, proxy.clone()) {
+                None => match build_settings(target, &mut web_ctx, proxy.clone(), Arc::clone(&state)) {
                     Ok(s) => { info!("settings opened"); settings = Some(s); }
                     Err(e) => warn!("couldn't open settings: {e:#} (is the WebView2 runtime installed?)"),
                 },
@@ -232,6 +249,7 @@ fn build_settings(
     target: &tao::event_loop::EventLoopWindowTarget<UserEvent>,
     ctx: &mut WebContext,
     proxy: EventLoopProxy<UserEvent>,
+    state: Arc<State>,
 ) -> Result<Settings> {
     #[cfg(target_os = "windows")]
     use tao::platform::windows::WindowBuilderExtWindows;
@@ -255,11 +273,25 @@ fn build_settings(
         .with_window_icon(Icon::from_rgba(tray::rgba(Mode::Idle), 32, 32).ok())
         .build(target)?;
 
+    let drop_proxy = Mutex::new(proxy.clone());
     let ipc_proxy = Mutex::new(proxy);
     let builder = WebViewBuilder::new_with_web_context(ctx)
-        .with_custom_protocol("dv".into(), |_id, req| serve(&req))
+        .with_custom_protocol("dv".into(), move |_id, req| serve(&state, &req))
         .with_ipc_handler(move |req: Request<String>| {
             let _ = ipc_proxy.lock().send_event(UserEvent::Ipc(req.into_body()));
+        })
+        // Native drag and drop: real paths, which the page itself never gets.
+        .with_drag_drop_handler(move |e| {
+            use wry::DragDropEvent as D;
+            let ev = match e {
+                D::Enter { paths, .. } => UserEvent::Drag(Some(paths.iter()
+                    .filter(|p| p.is_dir() || crate::transcribe::is_audio(p)).count())),
+                D::Leave => UserEvent::Drag(None),
+                D::Drop { paths, .. } => UserEvent::Drop(paths),
+                _ => return true,
+            };
+            let _ = drop_proxy.lock().send_event(ev);
+            true // ours: the page never navigates to a dropped file
         })
         // Runs before any page script: JS errors land in OUR log, not in a
         // devtools console nobody has open.
@@ -304,10 +336,14 @@ const ASSETS: &[(&str, &str, &[u8])] = &[
     ("/mascot.webp", "image/webp",                     include_bytes!("../ui/mascot.webp")),
 ];
 
-fn serve(req: &Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {
+fn serve(state: &State, req: &Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {
     let path = match req.uri().path() { "/index.html" => "/", p => p };
     // /clip/<id>: benchmark audio for play-along (baked or from %APPDATA%).
-    let clip = path.strip_prefix("/clip/").and_then(crate::clips::audio);
+    // /file/<id>: a Files-tab job's original audio, for its ▶.
+    let clip = path.strip_prefix("/clip/").and_then(crate::clips::audio)
+        .or_else(|| path.strip_prefix("/file/")?.parse().ok()
+            .and_then(|id| crate::transcribe::audio(state, id))
+            .map(|(bytes, mime)| (Cow::Owned(bytes), mime)));
     let (status, mime, body): (u16, &str, Cow<'static, [u8]>) = match clip {
         Some((bytes, mime)) => (200, mime, bytes),
         None => ASSETS.iter().find(|(p, _, _)| *p == path)
